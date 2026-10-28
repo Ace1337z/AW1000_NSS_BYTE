@@ -10,12 +10,26 @@
 
 # Base tree: OpenWrt with the NSS/EDMA rework (was JuliusBairaktaris/
 # openwrt-nss-edma, renamed upstream). Branch nss-edma-rework.
+#
+# STATUS: this branch is ARCHIVED upstream. Its README says so and points at
+# the ppe-nss branch, which is the actively developed tree (kernel 6.18, PPE
+# rather than EDMA, NSS packages moved into the feed, no package/nss/nss-tools
+# in the tree). We stay here because XT-Martinez's aw1000-feed - the proven
+# build this repo follows - is built on exactly this tree, and moving to
+# ppe-nss would mean rewriting build/patches-openwrt/0002 (it patches
+# package/nss/nss-tools, which no longer exists there) and re-testing the whole
+# feed set. The archive tag is archive/nss-edma-rework-final.
 OPENWRT_URL="https://github.com/JuliusBairaktaris/openwrt-ppe-nss"
 OPENWRT_SHA="65a94490a509895623aae30faa690347903399f2"
 
 # NSS firmware/driver feed. The aw1000-nss branch is the one XT-Martinez's
 # proven aw1000-feed builds against (same SHA), and it carries the wwan/ tree
-# (quectel-qmi-wwan + rmnet-nss) that the raw-IP modem offload needs.
+# (quectel-qmi-wwan + rmnet-nss) that kmod-rmnet-nss comes from.
+#
+# Note this is NOT JuliusBairaktaris/nss-packages (the tree's own upstream
+# feed): that one has edma-nss for the archived branch and ppe-nss for the new
+# tree, and neither carries a wwan/ directory. The AW1000's modem packages come
+# from this feed plus the vendored copies in wwan/ and aw1000/.
 NSS_PACKAGES_URL="https://github.com/xhikarishii/nss-packages"
 NSS_PACKAGES_SHA="ef05f5c10e6e106fc7ae3d0c67c7fb5c782bc264"
 

@@ -257,14 +257,24 @@ reach the clients.
 
 ## Packet steering
 
-Enabled (`network.@globals[0].packet_steering=1`), against the NSS feed's
-default of 0. The reasoning and the measurement it contradicts are in
-`byte/files/etc/uci-defaults/99-byte`; in short, this image runs passwall2,
-where the CPU - not the NSS - handles the encrypted flows, so spreading the
-receive path over four cores is worth more than the raw offload throughput the
-NSS-optimised setting buys.
+**Off**, matching the NSS feed's `98-nss-offload` default. Its comment records
+the measurement on this board (Wi-Fi client to wired host through the router,
+two runs each): 749 and 800 Mbit/s with the service disabled against 619 and
+626 with it on, plus `n2h_rx_queue` drops (158 and 83) where disabling it
+produced none. Linux RPS assumes one host NAPI per hardware queue, which does
+not describe a datapath where the firmware delivers through N2H - the NSS
+already spreads work over its queues, so steering duplicates it.
 
-To go back: `uci set network.@globals[0].packet_steering='0'`.
+Turn it on by hand if you want it:
+
+```sh
+uci set network.@globals[0].packet_steering='1'
+uci commit network && /etc/init.d/packet_steering restart
+```
+
+`byte-affinity` still spreads the modem's USB interrupts and sets RPS on the
+`wwan*` netdevs. That is the part that matters for cellular throughput, and it
+does not touch the NSS delivery path.
 
 ## Image size
 
@@ -297,3 +307,69 @@ hash/crc32c modules (WireGuard, Tailscale, the NSS stack).
 `CONFIG_STRIP_KERNEL_EXPORTS` is **not** used: it depends on `BROKEN` in this
 tree, so defconfig would drop it and the symbol-verification step would fail
 the build.
+
+## LuCI apps in the image
+
+Fifteen `luci-app-*` packages. Everything else LuCI-side is a library
+(`luci-lib-jsonc`, `luci-compat`), a protocol handler (`luci-proto-*`), the
+theme, or the dashboard module.
+
+| App | What it is | Source |
+|---|---|---|
+| `luci-app-aw1000-modem` | Modem pages: SMS conversations, bands, cell scan and lock, AT console | this repo |
+| `luci-app-modeminfo` | Serving-cell / SA info page | vendored from AW1000_BYTE |
+| `luci-app-fxs` | RJ11 phone port: dialling, history, caller ID | Perz3us/openwrt-aw1000-phone |
+| `luci-app-passwall2` | Proxy (26.4.10, Xray 26.3.27) | Openwrt-Passwall |
+| `luci-app-sqm` | Smart Queue Management | openwrt/luci |
+| `luci-app-adguardhome` | AdGuard Home UI (core is `adguardhome`) | sirpdboy |
+| `luci-app-netstat` | Live per-interface counters + connections | Ace1337z |
+| `luci-app-vnstat2` | Long-term traffic graphs (`vnstat2`, `vnstati2`) | openwrt/luci |
+| `luci-app-ddns` | Dynamic DNS | openwrt/luci |
+| `luci-app-wol` | Wake-on-LAN (`etherwake` included, the app does not pull it) | openwrt/luci |
+| `luci-app-tailscale-community` | Tailscale UI | openwrt/luci |
+| `luci-app-footstrap-files` | File manager for the Footstrap theme | VizzleTF |
+| `luci-mod-dashboard` | Status -> Dashboard page (the modem/thermal/NSS widgets) | openwrt/luci |
+| `luci-theme-footstrap` | The theme itself | VizzleTF |
+
+Plus `luci-proto-quectel` (the `quectel` netifd protocol form) and
+`luci-proto-wireguard`.
+
+Available from the feeds but **not** installed: `luci-app-nikki`,
+`luci-app-openclash`, `luci-app-nft-ttl` (excluded, see `feeds.exclude`), and
+the dotycat QoL set (`luci-app-aw1k-led`, `luci-app-nssinfo`,
+`luci-app-dstore`, `luci-app-occ`, `luci-app-netstat` from dotycat).
+
+## ubus-at-daemon
+
+Vendored in `aw1000/ubus-at-daemon` from FUjr/QModem `052f8447` (MPL-2.0),
+because the AW1000 phone stack needs it and the QModem feed is not wanted here.
+
+This is **not** a qmodem dependency in the sense of pulling qmodem in: `fxsd`
+sends *every* AT command through `ubus call at-daemon sendat` (see
+`modem_at()` in `fxsd/src/modem.c`), unconditionally. Its direct tty code is
+only a liveness probe (`at_ready()`), never a command path. The fxs README says
+the same thing ("fxsd sends AT commands through its at-daemon"). Dropping the
+daemon would leave the phone sitting at "Waiting for the modem" even though the
+modem answers `sms_tool` fine - which is exactly the failure mode the daemon
+exists to prevent.
+
+XT-Martinez's feed has no phone stack at all, so there is nothing there to
+compare against; the requirement comes from fxsd itself.
+
+## Upstream status
+
+`openwrt-ppe-nss` branch `nss-edma-rework` is **archived** upstream. Its README
+points at the `ppe-nss` branch (kernel 6.18, PPE instead of EDMA, NSS packages
+moved into the feed, no `package/nss/nss-tools` in the tree).
+
+This repo stays on the archived branch because XT-Martinez's `aw1000-feed` -
+the proven build it follows - is built on exactly this tree, and every package
+under `aw1000/`, `wwan/` and `net/` is byte-identical to his. Moving to
+`ppe-nss` is not a version bump: `build/patches-openwrt/0002` patches
+`package/nss/nss-tools`, which does not exist there, and the feed set would
+need re-testing end to end.
+
+If you do migrate, the work is: repoint `OPENWRT_SHA` and `NSS_PACKAGES_*` at
+`ppe-nss`, rewrite 0002 against the feed's `nss-tools`, drop 0003 if the new
+tree no longer pulls `uqmi`, and re-verify that `kmod-qmi_wwan_q`,
+`kmod-rmnet-nss` and the fxs SLIC module still build on 6.18.
