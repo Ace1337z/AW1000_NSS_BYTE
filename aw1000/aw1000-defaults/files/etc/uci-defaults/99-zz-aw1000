@@ -12,25 +12,45 @@
 
 . /lib/functions.sh
 
-# Modem data path: quectel-cm through netifd, IPv4 on wwan0_1 by default. For
-# IPv6 on its own PDN set pdptype ipv4v6, multiplexing 1 and apnv6: the IPv6
-# call then rides wwan0_2 (qmi_wwan_q built with qmap_mode=2) and comes up as
-# the dynamic interface wwan_6 in the same zone.
+# Modem data path: quectel-cm through netifd.
+#
+# Dual-stack by default. pdptype=ipv4v6 with multiplexing=1 puts IPv4 on
+# wwan0_1 and IPv6 on wwan0_2 (qmi_wwan_q is built with qmap_mode=2 for exactly
+# this), and the IPv6 call comes up as the dynamic interface wwan_6, which the
+# firewall zone below picks up by name.
+#
+# IPv6 being *available* is not the same as IPv6 *working*: plenty of carriers
+# hand out a prefix and never route it, and then every client prefers IPv6
+# (RFC 6724) and sends traffic into a black hole - "the internet is fine but
+# nothing loads". byte-v6-check measures real connectivity and only demotes to
+# IPv4 when it actually fails, so enabling IPv6 here is safe.
+#
+# apnv6 is left unset on purpose: it falls back to apn, which is what a single
+# APN with dual-stack PDP does on every carrier seen so far. Set it only if the
+# carrier wants a separate IPv6 APN.
 if ! uci -q get network.wwan >/dev/null; then
 	uci set network.wwan='interface'
 	uci set network.wwan.proto='quectel'
 	uci set network.wwan.device='/dev/cdc-wdm0'
 	uci set network.wwan.apn='internet'
-	uci set network.wwan.pdptype='ipv4'
-	uci set network.wwan.multiplexing='0'
+	uci set network.wwan.pdptype='ipv4v6'
+	uci set network.wwan.multiplexing='1'
 	uci set network.wwan.auth='none'
 	uci set network.wwan.metric='10'
+	# Let netifd's DHCPv6 client on wwan_6 request a prefix the LAN can use.
+	uci set network.wwan.delegate='1'
 fi
 
+# The modem interfaces go in the wan zone. wwan_6 is the dynamic IPv6
+# interface quectel.sh creates when pdptype is ipv4v6 with multiplexing, so it
+# has to be listed too - otherwise IPv6 is up but firewalled off from the LAN
+# (no forward, no masq for v6) and only IPv4 appears to work.
 wan_zone="$(uci show firewall | sed -n "s/^firewall\.\(@zone\[[0-9]*\]\)\.name='wan'$/\1/p" | head -n1)"
 if [ -n "$wan_zone" ]; then
-	uci -q del_list "firewall.$wan_zone.network=wwan"
-	uci add_list "firewall.$wan_zone.network=wwan"
+	for net in wwan wwan_6; do
+		uci -q del_list "firewall.$wan_zone.network=$net"
+		uci add_list "firewall.$wan_zone.network=$net"
+	done
 fi
 
 # LEDs: signal, 5G, internet and phone belong to aw1000-leds, Wi-Fi to a

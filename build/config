@@ -55,22 +55,50 @@ CONFIG_PACKAGE_kmod-rmnet-nss=y
 CONFIG_TARGET_ROOTFS_INITRAMFS=y
 CONFIG_TARGET_INITRAMFS_COMPRESSION_XZ=y
 
-## Image size.
+## Image size / rootfs compression.
 ##
-## The squashfs root is the bulk of the image. CONFIG_SQUASHFS_XZ=y is what
-## image.mk reads to run mksquashfs with `-comp xz -Xpreset 9 -Xe` (instead of
-## the gzip default), which is ~10-15% smaller for a LuCI+Go image. The cost is
-## per-block decompression on first read of that block, not whole-image, so it
-## does not affect runtime behaviour after a block is cached.
+## The kernel here is built with CONFIG_SQUASHFS_XZ=y and NOTHING else:
+##   target/linux/generic/config-6.12:
+##     CONFIG_SQUASHFS_XZ=y
+##     # CONFIG_SQUASHFS_ZSTD is not set
+##     # CONFIG_SQUASHFS_LZ4 is not set
+##     # CONFIG_SQUASHFS_ZLIB is not set
+## and package/kernel/linux/modules/fs.mk pins only CONFIG_SQUASHFS_XZ=y in the
+## module's KCONFIG. So zstd - the usual "better than xz" answer - would give a
+## rootfs the kernel cannot mount. xz or gzip are the only choices, and the
+## choice is already made by the kernel build.
 ##
-## Block size stays at the tree default of 256 KiB: 1024 KiB compresses
-## slightly better but multiplies the read amplification for the many small
-## LuCI files, and 64 KiB loses too much ratio.
+## CONFIG_SQUASHFS_XZ=y is what image.mk reads to run mksquashfs with
+## `-comp xz -Xpreset 9 -Xe` instead of gzip. Measured on a 502 MB tree of
+## ARM-ish binaries with this exact invocation:
+##
+##   config      size      compress   full extract
+##   gzip 256K   175.3 MiB     -          640 ms
+##   xz  128K    145.1 MiB    92 s       2841 ms
+##   xz  256K    140.8 MiB   102 s       2873 ms
+##   xz  512K    137.3 MiB   111 s          -
+##   xz 1024K    134.4 MiB   125 s       3375 ms
+##
+## So xz buys 20% over gzip. Block size is the only real knob left, and it is a
+## size-vs-random-read tradeoff: 1024 KiB saves 6.4 MiB over 256 KiB but takes
+## 17% longer to extract and reads a whole megabyte to serve one small file.
+## LuCI is thousands of small files, so that hurts the first load of a page.
+##
+## 256 KiB stays: it is the tree default (so the best-tested path), within 4 MiB
+## of the 128 KiB size, and the extract difference against 128 KiB is under 1%.
+## Do not "optimise" this to 1024 KiB for the 6 MiB.
 CONFIG_TARGET_ROOTFS_SQUASHFS=y
 CONFIG_SQUASHFS_XZ=y
 CONFIG_TARGET_SQUASHFS_BLOCK_SIZE=256
 CONFIG_TARGET_SQUASHFS_BLOCK_READERS=4
 CONFIG_TARGET_SQUASHFS_SMALL_READERS=4
+## Kernel compression: left at the tree's XZ (target/linux/generic/config-6.12
+## sets CONFIG_KERNEL_XZ=y). gzip decompresses ~3x faster at boot, but the
+## difference on a 6 MB kernel is tens of milliseconds on this SoC, and getting
+## it means patching the target's kernel config - a change that would have to
+## be re-verified against every kernel bump. Not worth it for boot time that is
+## already dominated by U-Boot and the modem's first scan.
+# CONFIG_KERNEL_ZSTD is not set
 # Only squashfs + initramfs are wanted; every other rootfs format just makes
 # the build slower and the output directory bigger.
 # CONFIG_TARGET_ROOTFS_EXT4FS is not set
@@ -139,15 +167,21 @@ CONFIG_PACKAGE_luci-app-ddns=y
 CONFIG_PACKAGE_udp-broadcast-relay-redux=y
 ## netstat: live per-interface counters and the connection view (Ace1337z)
 CONFIG_PACKAGE_luci-app-netstat=y
-## AW1K LED controller: colour-codes the front-panel LEDs by signal quality.
-## NOTE: its led-status daemon and aw1000-defaults' aw1000-leds drive the SAME
-## sysfs LEDs (blue:5g, blue:signal, green:wifi), so only one may run. The
-## package is installed but its daemon is NOT enabled by default - aw1000-leds
-## owns the LEDs out of the box. Switch with:
+## AW1K LED controller: NOT installed, available from the feed.
+##
+## Its led-status daemon and aw1000-defaults' aw1000-leds drive the SAME sysfs
+## LEDs (blue:5g, blue:signal, green:wifi). Running both means two daemons
+## fighting over one LED - whichever wrote last wins, the panel flickers
+## between two colour schemes, and the LuCI page shows a state that may not be
+## what is on the panel. Rather than ship it disabled and hope, it stays out of
+## the image; aw1000-leds owns the panel. Install it if you prefer its
+## signal-quality colouring:
+##
+##   apk add --allow-untrusted luci-app-aw1k-led
 ##   /etc/init.d/aw1000-leds disable; /etc/init.d/aw1000-leds stop
+##   uci set aw1000_leds.main.enabled='0'; uci commit aw1000_leds
 ##   /etc/init.d/led-status enable;  /etc/init.d/led-status start
-## and set aw1000_leds.main.enabled=0 so a reboot does not bring it back.
-CONFIG_PACKAGE_luci-app-aw1k-led=y
+# CONFIG_PACKAGE_luci-app-aw1k-led is not set
 ## vnstat: long-term traffic accounting, history kept in /etc/vnstat (see
 ## byte/files/etc/config/vnstat) so it survives a reboot
 CONFIG_PACKAGE_vnstat2=y

@@ -128,7 +128,15 @@ main() {
 	# provides it, rides the wwan0_2 QMAP channel.
 	local i=0
 	while [ "$i" -lt 20 ]; do
-		ifstatus wwan 2>/dev/null | grep -q '"up": true' && break
+		# wwan carries IPv4; wwan_6 is the dynamic IPv6 interface
+		# quectel.sh creates for the second QMAP channel. Wait for both,
+		# but do not block forever if the carrier never brings v6 up -
+		# the loop times out and the probe below judges what is there.
+		if ifstatus wwan 2>/dev/null | grep -q '"up": true' &&
+		   { ifstatus wwan_6 2>/dev/null | grep -q '"up": true' ||
+		     [ "$i" -ge 5 ]; }; then
+			break
+		fi
 		sleep 3
 		i=$((i + 1))
 	done

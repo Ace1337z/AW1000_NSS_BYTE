@@ -31,10 +31,23 @@ config dhcp 'lan'
 	option limit '150'
 	option leasetime '12h'
 	option dhcpv4 'server'
+	# IPv6 to LAN clients. ra 'server' advertises the delegated prefix and
+	# dhcpv6 'server' hands out addresses from it; both ra_flags are needed -
+	# managed-config tells clients to ask DHCPv6 for an address, other-config
+	# to ask for DNS/NTP. With only other-config (what this file used to
+	# carry) clients configure themselves from the prefix but never get a
+	# DHCPv6 lease, so half the clients end up with no usable v6 address.
+	# odhcpd.defaults in the base tree sets both; this file has to as well,
+	# because it replaces the generated one.
 	option ra 'server'
+	option dhcpv6 'server'
+	list ra_flags 'managed-config'
 	list ra_flags 'other-config'
 	option max_preferred_lifetime '2700'
 	option max_valid_lifetime '5400'
+	# The LAN is the master for prefix delegation: it is where wwan_6's
+	# delegated prefix is re-advertised.
+	option master '1'
 
 config odhcpd 'odhcpd'
 	option maindhcp '0'
