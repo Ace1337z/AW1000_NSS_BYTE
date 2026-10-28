@@ -12,8 +12,12 @@ RJ11 phone port), on the NSS-EDMA tree with **apk** as the package manager.
   default; Nikki and OpenClash are carried in the feeds (with their runtime
   deps already in the image) and can be installed from LuCI afterwards -
   never two at once
-- Also in the image: SQM, AdGuard Home + LuCI app, netstat, vnstat2,
-  modeminfo, the RJ11 phone stack
+- Also in the image: SQM, netstat, vnstat2, modeminfo, the RJ11 phone stack,
+  and the one-click AdGuard Home + PassWall2 setup page
+- **Not** in the image, built and published as feed packages only: AdGuard
+  Home, Tailscale, the AW1K LED controller, Nikki and OpenClash - install any
+  of them with `apk add --allow-untrusted` (see "Built, published, not in the
+  image" below)
 - Defaults: LAN `192.168.1.1`, SSID `BYTE` (open), root password empty
 
 ## Screenshots
