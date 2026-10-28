@@ -1,0 +1,79 @@
+#!/bin/sh
+# BYTE runtime defaults, applied once on first boot.
+#
+# Everything here is idempotent and guarded by a UCI marker, because the file
+# ships in the image and therefore runs again after every settings-keeping
+# sysupgrade. Clear the marker to have it applied again:
+#
+#   uci delete system.@system[0].byte_defaults && uci commit system
+[ "$(uci -q get system.@system[0].byte_defaults)" = 1 ] && exit 0
+
+log() { logger -t byte-defaults "$*"; }
+
+# ---- TTL / HopLimit rewrite on the modem uplink -----------------------------
+# The point of this image. Enabled even when /etc/config survived an upgrade.
+if [ -x /etc/init.d/byte-ttl ]; then
+	/etc/init.d/byte-ttl enable 2>/dev/null
+	/etc/init.d/byte-ttl start 2>/dev/null
+	log "byte-ttl enabled"
+fi
+
+# ---- MTU clamp -------------------------------------------------------------
+# The modem bearer cannot carry 1500: full-size packets are dropped upstream
+# (PMTU blackhole) while small ones pass, which stalls large transfers and
+# VoIP. Re-applied by /etc/hotplug.d/iface/90-byte-mtu on every ifup.
+if [ -x /etc/init.d/byte-mtu ]; then
+	/etc/init.d/byte-mtu enable 2>/dev/null
+	/etc/init.d/byte-mtu start 2>/dev/null
+	log "byte-mtu enabled"
+fi
+
+# ---- IPv6 sanity -----------------------------------------------------------
+# IPv6 stays enabled; this only demotes it to IPv4 when the carrier delegates
+# a prefix but provides no routable WAN address, which would otherwise make
+# clients prefer a dead path.
+if [ -x /etc/init.d/byte-v6 ]; then
+	/etc/init.d/byte-v6 enable 2>/dev/null
+	log "byte-v6 enabled"
+fi
+
+# ---- CPU spread ------------------------------------------------------------
+# The modem's USB interrupts all land on one core; with passwall2 doing
+# userspace crypto on top, that core saturates long before the link does.
+if [ -x /etc/init.d/byte-affinity ]; then
+	/etc/init.d/byte-affinity enable 2>/dev/null
+	/etc/init.d/byte-affinity start 2>/dev/null
+	log "byte-affinity enabled"
+fi
+
+# ---- Tailscale gate --------------------------------------------------------
+# The package service starts tailscaled (13 MB private RSS) even with no
+# credentials configured. The gate starts it only once a state file exists,
+# and still lets `tailscale up` / LuCI start it directly.
+if [ -x /etc/init.d/byte-tailscale-gate ]; then
+	/etc/init.d/byte-tailscale-gate enable 2>/dev/null
+	[ -x /etc/init.d/tailscale ] && /etc/init.d/tailscale disable 2>/dev/null
+	log "byte-tailscale-gate enabled"
+fi
+
+# ---- NSS/ECM flow offload --------------------------------------------------
+# ECM bypasses netfilter entirely, so offloaded flows keep their original TTL
+# and defeat the rewrite above. Keep it installed - /usr/bin/nss-offload can
+# turn it on - but off by default: TTL correctness beats offload throughput.
+if [ -x /etc/init.d/qca-nss-ecm ]; then
+	/etc/init.d/qca-nss-ecm stop 2>/dev/null
+	/etc/init.d/qca-nss-ecm disable 2>/dev/null
+	log "qca-nss-ecm disabled (TTL rewrite takes priority)"
+fi
+
+# ---- Theme -----------------------------------------------------------------
+# footstrap is the only theme in the image; pin it in case a settings-keeping
+# upgrade carried over another mediaurlbase.
+[ -d /www/luci-static/footstrap ] && uci -q set luci.main.mediaurlbase='/luci-static/footstrap'
+
+uci set system.@system[0].byte_defaults='1'
+uci commit system
+uci commit luci 2>/dev/null
+
+log "defaults applied"
+exit 0

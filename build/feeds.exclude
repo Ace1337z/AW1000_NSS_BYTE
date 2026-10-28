@@ -1,0 +1,14 @@
+# Installed feed package directories to remove again, as <feed>/<dir>.
+# scripts/feeds keys source packages by directory name, so two feeds carrying
+# the same binary package under different directories both get installed.
+
+# luci_smstool carries its own LuCI app, which would collide with the
+# packages feed's sms-tool-js page. Only sms-tool itself is wanted.
+luci_smstool/luci-app-sms-tool-js
+
+# dotycat's luci-app-nft-ttl writes its own /etc/nftables.d/ttl64.nft and a
+# postrouting rule keyed on iifname br-lan. byte-ttl already owns the modem
+# egress rewrite (and does it on the output interface, which is the correct
+# hook); installing both means two rules rewriting the same packets and a
+# LuCI page that silently disagrees with the running config.
+dotycat/luci-app-nft-ttl

@@ -1,0 +1,23 @@
+# Pinned revisions for build/build.sh and build/inside.sh.
+#
+# Every entry is a full 40-char SHA. A branch name would let an upstream
+# force-push change the image between two builds of the same commit of this
+# repo; an abbreviated SHA makes `src-git` fail with "couldn't find remote ref".
+#
+# Bump one line at a time and re-run the build: patches in build/patches-*
+# are pinned to these trees and fail loudly (not silently) when they no longer
+# apply.
+
+# Base tree: OpenWrt with the NSS/EDMA rework (was JuliusBairaktaris/
+# openwrt-nss-edma, renamed upstream). Branch nss-edma-rework.
+OPENWRT_URL="https://github.com/JuliusBairaktaris/openwrt-ppe-nss"
+OPENWRT_SHA="65a94490a509895623aae30faa690347903399f2"
+
+# NSS firmware/driver feed. The aw1000-nss branch carries the raw-IP modem
+# patches (rmnet_rx bind) that CONFIG_NSS_DRV_RMNET_ENABLE needs.
+NSS_PACKAGES_URL="https://github.com/xhikarishii/nss-packages"
+NSS_PACKAGES_SHA="ef05f5c10e6e106fc7ae3d0c67c7fb5c782bc264"
+
+# Common NSS config, toolchain and hardening options, and the QoL overlay.
+BUILDER_URL="https://github.com/JuliusBairaktaris/Qualcommax_NSS_Builder"
+BUILDER_SHA="67279a6f04eb88a63b641f6940487c22b0da9769"

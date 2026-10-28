@@ -1,0 +1,8 @@
+#!/bin/sh
+# Re-evaluate IPv6 usability when the modem interface comes up, because a
+# reconnect can change whether the carrier gives us a routable IPv6 address.
+[ "$ACTION" = "ifup" ] || exit 0
+case "$INTERFACE" in
+	wan|wwan) [ -x /usr/libexec/byte-v6-check ] && ( /usr/libexec/byte-v6-check ) & ;;
+esac
+exit 0

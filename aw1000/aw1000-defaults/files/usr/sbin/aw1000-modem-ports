@@ -1,0 +1,53 @@
+#!/bin/sh
+# Point aw1000-leds at the RG500Q's second AT port by USB interface, not by
+# ttyUSB number: if a port is still held open while the modem resets, it can
+# come back under a new number (ttyUSB3 -> ttyUSB4) and every tool pinned to
+# the old name stops working. Run from /etc/hotplug.d/tty and aw1000-defaults.
+# "aw1000-modem-ports port <interface>" prints the port of one interface.
+#
+#   interface 2 (first AT port):  the LuCI modem pages (luci-app-aw1000-modem,
+#                                 which asks "port 02" on every call)
+#   interface 3 (second AT port): front panel LEDs and the dashboard's cache
+
+VIDPID='2c7c:0800'
+
+port_for() {
+	local t d
+
+	for t in /sys/class/tty/ttyUSB*; do
+		[ -e "$t/device" ] || continue
+		d="$(readlink -f "$t/device")/.."
+		[ "$(cat "$d/../idVendor"):$(cat "$d/../idProduct")" = "$VIDPID" ] 2>/dev/null || continue
+		[ "$(cat "$d/bInterfaceNumber")" = "$1" ] && { echo "/dev/${t##*/}"; return; }
+	done
+}
+
+if [ "$1" = port ]; then
+	port_for "$2"
+	exit 0
+fi
+
+changed=''
+
+# set <config.section.option> <value>, only where the section exists
+set_opt() {
+	local cfg="${1%%.*}" sec="${1%.*}"
+
+	uci -q get "$sec" >/dev/null || return
+	[ "$(uci -q get "$1")" = "$2" ] && return
+	uci set "$1=$2"
+	case " $changed " in *" $cfg "*) ;; *) changed="$changed $cfg" ;; esac
+}
+
+at2="$(port_for 03)"
+
+[ -n "$at2" ] && set_opt aw1000_leds.main.atport "$at2"
+
+for cfg in $changed; do
+	uci commit "$cfg"
+	logger -t aw1000-modem-ports "$cfg: AT port now $at2"
+done
+case " $changed " in
+*" aw1000_leds "*) /etc/init.d/aw1000-leds enabled && /etc/init.d/aw1000-leds restart ;;
+esac
+exit 0

@@ -1,0 +1,76 @@
+name: Build AW1000_NSS_BYTE firmware
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - build/**
+      - aw1000/**
+      - byte/**
+      - wwan/**
+      - net/**
+      - .github/workflows/build.yml
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build AW1000_NSS_BYTE (OpenWrt NSS, apk) for AW1000
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+
+    env:
+      CI: "1"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+            /usr/local/share/boost "$AGENT_TOOLSDIRECTORY"
+          sudo apt-get clean
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y \
+            ack antlr3 asciidoc autoconf automake autopoint binutils bison build-essential \
+            bzip2 ccache clang cmake cpio curl device-tree-compiler ecj fastjar flex gawk gettext \
+            gcc-multilib g++-multilib git gnutls-dev gperf haveged help2man intltool lib32gcc-s1 \
+            libc6-dev-i386 libelf-dev libglib2.0-dev libgmp3-dev libltdl-dev libmpc-dev libmpfr-dev \
+            libncurses-dev libpython3-dev libreadline-dev libssl-dev libtool libyaml-dev libz-dev \
+            lld llvm lrzsz mkisofs msmtp nano ninja-build p7zip p7zip-full patch pkgconf python3 \
+            python3-pip python3-ply python3-docutils python3-pyelftools qemu-utils re2c rsync scons \
+            squashfs-tools subversion swig texinfo uglifyjs upx-ucl unzip vim wget xmlto xxd zlib1g-dev
+
+      - name: Cache downloads and ccache
+        uses: actions/cache@v4
+        with:
+          path: |
+            work/openwrt/dl
+            work/openwrt/.ccache
+          key: aw1000-nss-byte-${{ github.run_id }}
+          restore-keys: |
+            aw1000-nss-byte-
+
+      - name: Fetch pinned trees and build
+        run: |
+          chmod +x build/build.sh build/inside.sh
+          ./build/build.sh all
+
+      - name: Collect artifacts
+        run: |
+          mkdir -p out
+          cp -a work/openwrt/bin/targets/qualcommax/ipq807x/. out/
+          ls -l out
+
+      - name: Upload images
+        uses: actions/upload-artifact@v4
+        with:
+          name: aw1000-nss-byte-images
+          path: out/*
+          if-no-files-found: error

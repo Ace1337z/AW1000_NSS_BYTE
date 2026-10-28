@@ -1,0 +1,11 @@
+# Build output: fetched trees, downloads and images.
+/work/
+/out/
+
+# Site-specific overlay (Wi-Fi keys, SSH keys), never committed.
+/private-files/
+
+# Editor and OS noise
+*.swp
+*~
+.DS_Store

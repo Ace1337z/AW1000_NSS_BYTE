@@ -1,0 +1,32 @@
+# Feeds added on top of openwrt/feeds.conf.default, one per line, in install
+# order. Package directories to drop again after installing are listed in
+# feeds.exclude.
+#
+# @WORK@ is substituted by build/inside.sh with the path of the build work
+# directory, so the same file works on a GitHub runner and on a workstation.
+#
+# Every src-git line is pinned to a full 40-char SHA: an abbreviated one makes
+# src-git fail with "couldn't find remote ref", and a branch name would let an
+# upstream force-push change the image between two builds of the same commit.
+src-link aw1000 @WORK@/aw1000-feed
+src-link nss @WORK@/nss-packages
+src-git footstrap https://github.com/VizzleTF/luci-theme-footstrap.git^ef68bbbb3a975a5eaa923b37a98e81a4ee005296
+src-git footstrap_files https://github.com/VizzleTF/luci-app-footstrap-files.git^e2aa8d1ff471b30d3789793949e5d79fb915b0a4
+# 4IceG's repo, only for its newer sms-tool (preferred over the packages
+# feed's, see feeds.prefer); its LuCI app is not built.
+src-git luci_smstool https://github.com/4IceG/luci-app-sms-tool-js.git^a05daae5d4c5d91205bbdb6aa1930145d98e4481
+# Passwall2 is installed by default (build/config). Nikki and OpenClash are
+# carried in the tree so they can be installed from LuCI afterwards, but they
+# are not enabled: all three want the same TPROXY/nftables hooks, so only one
+# may be installed at a time.
+src-git passwall2 https://github.com/Openwrt-Passwall/openwrt-passwall2.git^4b4b84dc120bb37592ea51e7107ce4fe0083420f
+# passwall2's own dependencies (chinadns-ng, geoview, tcping, Xray-core,
+# v2ray-geodata, shadowsocks-rust, sing-box, hysteria...) are not in
+# openwrt/packages; they come from Passwall's separate packages repo.
+src-git passwall_pkgs https://github.com/xiaorouji/openwrt-passwall-packages.git^19b6d1133fd861312659b3be38f19d52aaf3facf
+src-git nikki https://github.com/nikkinikki-org/OpenWrt-nikki.git^78e1a751d55ed0762811f054ee699049473da7b8
+# dotycat: extra AW1000 quality-of-life packages (LED, nssinfo, dstore...).
+# Nothing here is enabled by default, and luci-app-nft-ttl is excluded because
+# it would fight byte-ttl over the same nft rules (see feeds.exclude).
+src-git dotycat https://github.com/dotywrt/dotycat-package.git^fe9f2411189b53c66ddc4f1d91d436bde148923d
+src-git fxs https://github.com/Perz3us/openwrt-aw1000-phone.git^901f9dd1fa661fa4858613579fbd83d521565b35

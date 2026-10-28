@@ -1,0 +1,25 @@
+#!/bin/sh
+# AW1000 RJ11 phone port: mark the services enabled on first boot.
+#
+# fxsd needs:
+#   - /etc/fxs/si3226x_patch.bin (shipped by the fxsd package) present, and
+#   - the modem PCM interface in slave mode (AT+QDAI 2nd field = 1), else
+#     fxsd's wait_modem() blocks forever and the phone won't work, and
+#   - the 'at-daemon' ubus object: fxsd sends every AT command through
+#     'ubus call at-daemon sendat', so without ubus-at-daemon running the
+#     phone sits at "Waiting for the modem" even though the modem answers
+#     sms_tool fine.
+#
+# The per-boot heavy lifting (PCM check, stale-guard clear, daemon + fxsd
+# start) runs from /etc/rc.local in the background every boot. Here we only
+# mark the services enabled, so they also come back after a sysupgrade that
+# kept /etc/config.
+
+if [ -x /etc/init.d/fxsd ]; then
+	/etc/init.d/fxsd enable 2>/dev/null
+fi
+if [ -x /etc/init.d/ubus-at-daemon ]; then
+	/etc/init.d/ubus-at-daemon enable 2>/dev/null
+fi
+
+exit 0

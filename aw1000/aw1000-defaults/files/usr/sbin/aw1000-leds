@@ -1,0 +1,296 @@
+#!/bin/sh
+# Arcadyan AW1000 front panel: the modem LEDs, from the serving cell, and
+# the internet LED.
+#
+#   signal (RGB)  LTE RSRP (the anchor on 5G NSA); steady green on 5G SA,
+#                 which has no LTE leg; off without service
+#   5g (RGB)      NR RSRP on 5G SA or NSA; off on LTE only
+#                 quality colours: green >= -90 dBm, blue >= -105, red below
+#   internet      steady while any of internet_ifaces (fiber wan, modem wwan)
+#                 can ping one of internet_hosts
+#
+#   phone         blinks while the modem holds more messages than were last
+#                 listed on the Modem > Messages page (luci-app-aw1000-modem
+#                 keeps that count in $SMS_SEEN)
+#
+# Also puts the modem's storage for new messages (+CPMS mem3) back to
+# aw1000_modem.sms.storage, ME or SM, when it differs, as after a restart.
+#
+# Wi-Fi is a plain trigger (aw1000-defaults). Run by /etc/init.d/aw1000-leds.
+#
+# Polls the modem's second AT port (set in /etc/config/aw1000_leds); the LuCI
+# modem pages use the first. Every poll takes the modem's lock, which all AT
+# users share, and a poll that finds it taken (a cell scan holds it for
+# about 100 s) is skipped. The dashboard's mobile and temperature widgets
+# read what this loop saves in $CACHE instead of asking the modem:
+#   live     serving cell, carriers, signal (CSQ), registration, operator,
+#            message memory use (CPMS), temperatures (every poll)
+#   static   locks, band preferences, model, firmware, SIM, PDP context (every
+#            STATIC_EVERY polls)
+#   history  "<epoch> <mode> <lte rsrp> <nr rsrp> <lte sinr> <nr sinr>",
+#            last HISTORY polls
+#   thermal  "<epoch> <cpu> <nss> <wifi> <modem>", hottest sensor of each
+#            in °C, last HISTORY polls
+#   nss      "<epoch> <ipv4> <ipv6>", connections ECM has offloaded to the
+#            NSS firmware, last HISTORY polls; only with ECM loaded
+
+PORT="$(uci -q get aw1000_leds.main.atport)"
+POLL="$(uci -q get aw1000_leds.main.interval)"
+INET_IFACES="$(uci -q get aw1000_leds.main.internet_ifaces)"
+INET_HOSTS="$(uci -q get aw1000_leds.main.internet_hosts)"
+PORT="${PORT:-/dev/ttyUSB3}"
+POLL="${POLL:-10}"
+INET_IFACES="${INET_IFACES:-wan wwan}"
+INET_HOSTS="${INET_HOSTS:-1.1.1.1 8.8.8.8}"
+
+CACHE=/tmp/aw1000-status
+LOCK=/var/lock/aw1000-modem.lock
+SMS_SEEN=/etc/aw1000-modem/sms-seen
+STATIC_EVERY=6
+HISTORY=31
+LIVE_AT='AT+QENG="servingcell";+QCAINFO;+CSQ;+CEREG?;+C5GREG?;+QSPN;+CPMS?;+QTEMP'
+STATIC_AT='AT+QNWLOCK="common/4g";+QNWLOCK="common/5g";+QNWPREFCFG="mode_pref";+QNWPREFCFG="lte_band";+QNWPREFCFG="nsa_nr5g_band";+QNWPREFCFG="nr5g_band";+CGMI;+CGMM;+CGMR;+QCCID;+QUIMSLOT?;+CGCONTRDP'
+
+LED_SIG_R="red:signal"
+LED_SIG_G="green:signal"
+LED_SIG_B="blue:signal"
+LED_5G_R="red:5g"
+LED_5G_G="green:5g"
+LED_5G_B="blue:5g"
+LED_INET="green:internet"
+LED_PHONE="green:phone"
+
+led_set() {
+	local path="/sys/class/leds/$1"
+
+	[ -d "$path" ] || return
+	echo none >"$path/trigger"
+	if [ "$2" = 1 ]; then
+		cat "$path/max_brightness" >"$path/brightness"
+	else
+		echo 0 >"$path/brightness"
+	fi
+}
+
+# rgb <red> <green> <blue> <r> <g> <b>
+rgb() {
+	led_set "$1" "$4"
+	led_set "$2" "$5"
+	led_set "$3" "$6"
+}
+
+modem_off() {
+	rgb "$LED_SIG_R" "$LED_SIG_G" "$LED_SIG_B" 0 0 0
+	rgb "$LED_5G_R" "$LED_5G_G" "$LED_5G_B" 0 0 0
+}
+
+all_off() {
+	modem_off
+	led_set "$LED_INET" 0
+	led_set "$LED_PHONE" 0
+}
+
+# Pings out of each interface's own device, so a dead fiber with a working
+# modem (or the other way round) still counts.
+internet_up() {
+	local ifc dev h
+
+	for ifc in $INET_IFACES; do
+		dev="$(ifstatus "$ifc" 2>/dev/null | jsonfilter -q -e '@.l3_device')"
+		[ -n "$dev" ] || continue
+		for h in $INET_HOSTS; do
+			ping -q -c 1 -W 2 -I "$dev" "$h" >/dev/null 2>&1 && return 0
+		done
+	done
+	return 1
+}
+
+update_internet() {
+	if internet_up; then
+		led_set "$LED_INET" 1
+	else
+		led_set "$LED_INET" 0
+	fi
+}
+
+# save <file> <at command>: the reply, behind a "TIME: <epoch>" line, swapped
+# in whole so a reader never sees half of it. Keeps the last one while the
+# modem is busy with somebody else's command.
+save() {
+	(
+		flock -n 9 || exit 0
+		{
+			echo "TIME: $(date +%s)"
+			sms_tool -d "$PORT" at "$2" 2>/dev/null | tr -d '\r'
+		} >"$CACHE/$1.tmp" && mv "$CACHE/$1.tmp" "$CACHE/$1"
+	) 9>>"$LOCK"
+}
+
+sms_storage() {
+	local want have
+
+	want="$(uci -q get aw1000_modem.sms.storage)"
+	case "$want" in ME | SM) ;; *) return ;; esac
+	have="$(tr -d '"' <"$CACHE/live" | awk -F, '/^\+CPMS:/ { print $7; exit }')"
+	[ -n "$have" ] && [ "$have" != "$want" ] || return
+	(
+		flock -n 9 || exit 0
+		sms_tool -d "$PORT" at "AT+CPMS=\"$want\",\"$want\",\"$want\"" >/dev/null 2>&1 &&
+			logger -t aw1000-leds "new SMS go to $want again"
+	) 9>>"$LOCK"
+}
+
+# The phone LED: blinking while +CPMS counts more messages, over the memories
+# in use, than $SMS_SEEN. A missing count starts at what is there.
+update_phone() {
+	local count seen
+
+	count="$(tr -d '"' <"$CACHE/live" | awk -F, '/^\+CPMS:/ {
+		sub(/^\+CPMS: */, "")
+		for (i = 1; i + 1 <= NF; i += 3) if (!($i in used)) { used[$i] = 1; n += $(i + 1) }
+		print n + 0; exit }')"
+	[ -n "$count" ] || return
+	sms_storage
+	[ -f "$SMS_SEEN" ] || { mkdir -p "${SMS_SEEN%/*}"; echo "$count" >"$SMS_SEEN"; }
+	seen="$(cat "$SMS_SEEN")"
+	[ -d "/sys/class/leds/$LED_PHONE" ] || return
+	if [ "$count" -gt "${seen:-0}" ] 2>/dev/null; then
+		[ "$(sed -n 's/.*\[\(.*\)\].*/\1/p' "/sys/class/leds/$LED_PHONE/trigger")" = timer ] ||
+			echo timer >"/sys/class/leds/$LED_PHONE/trigger"
+	else
+		led_set "$LED_PHONE" 0
+	fi
+}
+
+# Appends "<epoch> <cpu> <nss> <wifi> <modem>" to $CACHE/thermal: the
+# hottest SoC thermal zone of each kind (cpuN/cluster, nss*, wcss-*), the
+# hottest ath11k radio counting as Wi-Fi, the modem's from its saved +QTEMP.
+thermal() {
+	{
+		for z in /sys/class/thermal/thermal_zone*; do
+			echo "$(cat "$z/type") $(cat "$z/temp")"
+		done 2>/dev/null
+		for h in /sys/class/hwmon/hwmon*; do
+			[ "$(cat "$h/name")" = ath11k_hwmon ] && echo "wcss-radio $(cat "$h/temp1_input")"
+		done 2>/dev/null
+		tr -d '"' <"$CACHE/live" | awk -F, '/^\+QTEMP:/ { print "modem", $2 * 1000 }'
+	} | awk -v now="$(date +%s)" '
+		function hot(k, v) { if (!(k in t) || v > t[k]) t[k] = v }
+		$2 !~ /^[0-9]+$/ { next }
+		$1 ~ /^(cpu|cluster)/ { hot("cpu", $2) }
+		$1 ~ /^nss/ { hot("nss", $2) }
+		$1 ~ /^wcss/ { hot("wifi", $2) }
+		$1 == "modem" { hot("modem", $2) }
+		function c(k) { return (k in t) ? int(t[k] / 1000 + 0.5) : "-" }
+		END { print now, c("cpu"), c("nss"), c("wifi"), c("modem") }' >>"$CACHE/thermal"
+	tail -n "$HISTORY" "$CACHE/thermal" >"$CACHE/thermal.tmp" && mv "$CACHE/thermal.tmp" "$CACHE/thermal"
+}
+
+# Appends "<epoch> <ipv4> <ipv6>" to $CACHE/nss: the connections ECM has
+# offloaded to the NSS firmware. The firmware's own load figure is only
+# refreshed while its clock scales itself, which this build leaves off, so
+# it is not recorded.
+nss() {
+	local ecm=/sys/kernel/debug/ecm
+
+	[ -r "$ecm/ecm_nss_ipv4/accelerated_count" ] || return 0
+	echo "$(date +%s) $(cat "$ecm/ecm_nss_ipv4/accelerated_count") $(cat "$ecm/ecm_nss_ipv6/accelerated_count" 2>/dev/null || echo -)" >>"$CACHE/nss"
+	tail -n "$HISTORY" "$CACHE/nss" >"$CACHE/nss.tmp" && mv "$CACHE/nss.tmp" "$CACHE/nss"
+}
+
+# Prints "<mode> <lte rsrp> <nr rsrp> <lte sinr> <nr sinr>" from the saved AT+QENG="servingcell", mode LTE,
+# SA or NSA, "-" for a missing reading; nothing without service.
+#   +QENG: "servingcell",<state>,"LTE",<dup>,<mcc>,<mnc>,<cell>,<pci>,<earfcn>,<band>,<ul_bw>,<dl_bw>,<tac>,<rsrp>,...
+#   +QENG: "servingcell",<state>,"NR5G-SA",<dup>,<mcc>,<mnc>,<cell>,<pci>,<tac>,<arfcn>,<band>,<dl_bw>,<rsrp>,...
+#   EN-DC: +QENG: "servingcell",<state>
+#          +QENG: "LTE",<dup>,<mcc>,<mnc>,<cell>,<pci>,<earfcn>,<band>,<ul_bw>,<dl_bw>,<tac>,<rsrp>,...
+#          +QENG:"NR5G-NSA",<mcc>,<mnc>,<pci>,<rsrp>,<sinr>,<rsrq>,...
+#   (LTE: ...,<rsrp>,<rsrq>,<rssi>,<sinr>; SA: ...,<rsrp>,<rsrq>,<sinr>)
+serving_cell() {
+	tr -d '"' <"$CACHE/live" | awk -F, '
+		function num(v) { return v ~ /^-?[0-9]+$/ ? v : "-" }
+		/^\+QENG: ?servingcell/ {
+			if ($2 == "SEARCH" || $2 == "LIMSRV") exit
+			if ($3 == "LTE") { mode = "LTE"; lte = num($14); lsinr = num($17) }
+			else if ($3 == "NR5G-SA") { mode = "SA"; nr = num($13); nsinr = num($15) }
+		}
+		/^\+QENG: ?LTE/ { mode = "LTE"; lte = num($12); lsinr = num($15) }
+		/^\+QENG: ?NR5G-NSA/ { nsa = num($5); nsasinr = num($6) }
+		END {
+			if (mode == "LTE" && nsa != "" && nsa != "-") { mode = "NSA"; nr = nsa; nsinr = nsasinr }
+			if (mode != "") print mode, d(lte), d(nr), d(lsinr), d(nsinr)
+		}
+		function d(v) { return v == "" ? "-" : v }'
+}
+
+# quality <red> <green> <blue> <rsrp>: green >= -90, blue >= -105, red below,
+# off without a reading
+quality() {
+	case "$4" in
+	'' | - | *[!0-9-]*) rgb "$1" "$2" "$3" 0 0 0 ;;
+	*)
+		if [ "$4" -ge -90 ]; then
+			rgb "$1" "$2" "$3" 0 1 0
+		elif [ "$4" -ge -105 ]; then
+			rgb "$1" "$2" "$3" 0 0 1
+		else
+			rgb "$1" "$2" "$3" 1 0 0
+		fi
+		;;
+	esac
+}
+
+update() {
+	local mode lte nr lsinr nsinr
+
+	save live "$LIVE_AT"
+	set -- $(serving_cell)
+	mode="$1"
+	lte="$2"
+	nr="$3"
+	lsinr="$4"
+	nsinr="$5"
+
+	echo "$(date +%s) ${mode:--} ${lte:--} ${nr:--} ${lsinr:--} ${nsinr:--}" >>"$CACHE/history"
+	tail -n "$HISTORY" "$CACHE/history" >"$CACHE/history.tmp" && mv "$CACHE/history.tmp" "$CACHE/history"
+
+	case "$mode" in
+	LTE)
+		quality "$LED_SIG_R" "$LED_SIG_G" "$LED_SIG_B" "$lte"
+		rgb "$LED_5G_R" "$LED_5G_G" "$LED_5G_B" 0 0 0
+		;;
+	NSA)
+		quality "$LED_SIG_R" "$LED_SIG_G" "$LED_SIG_B" "$lte"
+		quality "$LED_5G_R" "$LED_5G_G" "$LED_5G_B" "$nr"
+		;;
+	SA)
+		rgb "$LED_SIG_R" "$LED_SIG_G" "$LED_SIG_B" 0 1 0
+		quality "$LED_5G_R" "$LED_5G_G" "$LED_5G_B" "$nr"
+		;;
+	*)
+		modem_off
+		;;
+	esac
+}
+
+if [ "$1" = off ]; then
+	all_off
+	exit 0
+fi
+
+trap 'all_off; exit 0' INT TERM
+
+mkdir -p "$CACHE"
+n=0
+
+while :; do
+	update_internet
+	update
+	update_phone
+	thermal
+	nss
+	[ $((n % STATIC_EVERY)) = 0 ] && save static "$STATIC_AT"
+	n=$((n + 1))
+	sleep "$POLL" &
+	wait $!
+done
