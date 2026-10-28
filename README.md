@@ -255,6 +255,38 @@ QUIC/HTTP3 works through all three: the conntrack helper, `nf-tproxy` /
 `filter_aaaa`/`filter_a` are off in `etc/config/dhcp` so HTTPS/SVCB records
 reach the clients.
 
+## IPv6
+
+**On by default, with a measured demotion.** `network.wwan` is dual-stack:
+
+```
+option pdptype 'ipv4v6'
+option multiplexing '1'
+option delegate '1'
+```
+
+IPv4 rides `wwan0_1`, IPv6 rides `wwan0_2` (that is what `qmap_mode=2` is for),
+and the IPv6 call comes up as the dynamic `wwan_6`, which the wan firewall zone
+lists alongside `wwan`. The LAN runs `ra server`, `dhcpv6 server`,
+`managed-config` + `other-config` and `master 1`, so clients get both a prefix
+and a lease.
+
+Being *available* is not the same as *working*: plenty of carriers delegate a
+prefix and never route it. `byte-v6-check` handles that by measuring rather
+than guessing - it waits for `wwan`/`wwan_6`, then makes real `wget -6`
+connections to three literal targets (two IPv6 literals and one hostname,
+so a broken resolver is distinguished from broken routing). Only if all of
+them fail does it demote:
+
+- writes `/etc/gai.conf` so `getaddrinfo` prefers IPv4
+- disables LAN `ra`/`dhcpv6` so clients stop being handed a dead prefix
+- flushes the ULA source off `br-lan`
+- installs a `metric 2048` default route so IPv4 wins
+
+It re-runs on every `ifup`, and `restore_ipv6` undoes all of it when a later
+connection turns out to work. Nothing is permanent: a carrier that fixes its
+IPv6 gets IPv6 back on the next reconnect.
+
 ## Packet steering
 
 **Off**, matching the NSS feed's `98-nss-offload` default. Its comment records
