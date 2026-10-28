@@ -1,11 +1,15 @@
 #!/bin/sh
-# BYTE runtime defaults, applied once on first boot.
+# AW1000_NSS_BYTE runtime defaults, applied once on first boot.
 #
 # Everything here is idempotent and guarded by a UCI marker, because the file
 # ships in the image and therefore runs again after every settings-keeping
 # sysupgrade. Clear the marker to have it applied again:
 #
 #   uci delete system.@system[0].byte_defaults && uci commit system
+#
+# This file is named 99-byte so it runs *after* the NSS feed's own
+# 98-nss-offload, which sets network.globals.packet_steering='0'. See the
+# packet steering block below for why we override that back to 1.
 [ "$(uci -q get system.@system[0].byte_defaults)" = 1 ] && exit 0
 
 log() { logger -t byte-defaults "$*"; }
@@ -46,6 +50,33 @@ if [ -x /etc/init.d/byte-affinity ]; then
 	log "byte-affinity enabled"
 fi
 
+# ---- Packet steering -------------------------------------------------------
+# ON, as requested. OpenWrt's packet_steering spreads the receive path of the
+# delivery netdevs across all four cores by writing rps_cpus, which is what
+# keeps a single core from saturating on LAN-to-LAN and Wi-Fi traffic.
+#
+# Note the tradeoff, because it is measured and real: the NSS feed ships
+# 98-nss-offload, which sets this to 0, and its comment records 749/800 Mbit/s
+# with steering off against 619/626 with it on, plus n2h_rx_queue drops, for a
+# Wi-Fi-to-wired flow through the router. That is the NSS hardware path, which
+# the firmware already spreads over N2H queues - Linux RPS on top of it
+# duplicates the work. We still enable it because this image runs passwall2,
+# where the CPU (not NSS) handles the encrypted flows and per-core spread
+# matters more than raw offload throughput; and because NSS/ECM offload is off
+# by default here (byte-ttl needs netfilter in the path).
+#
+# To go back to the NSS-optimised setting: uci set network.@globals[0].packet_steering='0'
+# The globals section may not exist yet on a fresh image, and `uci set` on a
+# missing section index silently does nothing - create it explicitly.
+if ! uci -q get network.@globals[0] >/dev/null 2>&1; then
+	uci -q add network globals
+fi
+uci -q set network.@globals[0].packet_steering='1'
+# steering_flows is the number of flows the flow-table steers per interface;
+# 0 means "all", which is what packet_steering.uc reads.
+uci -q set network.@globals[0].steering_flows='0'
+log "packet_steering enabled"
+
 # ---- Tailscale gate --------------------------------------------------------
 # The package service starts tailscaled (13 MB private RSS) even with no
 # credentials configured. The gate starts it only once a state file exists,
@@ -73,6 +104,7 @@ fi
 
 uci set system.@system[0].byte_defaults='1'
 uci commit system
+uci commit network
 uci commit luci 2>/dev/null
 
 log "defaults applied"

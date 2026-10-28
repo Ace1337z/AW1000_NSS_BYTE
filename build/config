@@ -27,13 +27,68 @@ CONFIG_TARGET_qualcommax_ipq807x_DEVICE_arcadyan_aw1000=y
 CONFIG_ATH11K_MEM_PROFILE_1G=y
 CONFIG_NSS_MEM_PROFILE_HIGH=y
 
-## Cellular WAN offload: qca-nss-drv binds raw-IP modem netdevs to rmnet_rx
-## (default y on ipq807x since nss-packages 944ea25; kept explicit).
+## Cellular WAN offload. Two halves, both required:
+##   - NSS_DRV_RMNET_ENABLE builds qca-nss-drv's rmnet_rx node support, and
+##     NSS_DRV_C2C_ENABLE gives the n2h node its core-1 hop.
+##   - the rmnet-nss module (nss feed, wwan/driver/rmnet-nss) publishes
+##     rmnet_nss_callbacks; qmi_wwan_q picks it up at load, marks the QMAP
+##     netdevs ARPHRD_RAWIP and hands accelerated packets to it. rmnet_nss_xmit()
+##     is what strips the 14-byte Ethernet header the firmware adds.
+## qmi_wwan_q only wires its own rmnet_nss hooks when built with
+## -DCONFIG_QCA_NSS_DRV, which this package deliberately does not pass (the
+## Makefile comment explains: the driver's own hook would claim the same
+## rx_handler the qca-nss-drv binder wants). The QMAP netdevs are still forced
+## to ARPHRD_RAWIP so ECM classifies them as rawip, and kmod-rmnet-nss is what
+## provides the rmnet_nss_callbacks symbol the driver looks up at load time.
+##
+## In practice the modem path here runs on the CPU, which is what XT-Martinez's
+## proven aw1000-feed does too (its qmi_wwan_q is byte-identical to this one,
+## and its config sets the same two NSS symbols). byte-ttl keeps ECM off by
+## default anyway, because ECM bypasses netfilter and would leak the real TTL,
+## so this only becomes relevant when a user runs `nss-offload on` and accepts
+## losing the TTL rewrite.
 CONFIG_NSS_DRV_RMNET_ENABLE=y
 CONFIG_NSS_DRV_C2C_ENABLE=y
+CONFIG_PACKAGE_kmod-rmnet-nss=y
+
 # initramfs FIT for USB boot testing (U-Boot: usbboot 0x44000000 0:4)
 CONFIG_TARGET_ROOTFS_INITRAMFS=y
 CONFIG_TARGET_INITRAMFS_COMPRESSION_XZ=y
+
+## Image size.
+##
+## The squashfs root is the bulk of the image. CONFIG_SQUASHFS_XZ=y is what
+## image.mk reads to run mksquashfs with `-comp xz -Xpreset 9 -Xe` (instead of
+## the gzip default), which is ~10-15% smaller for a LuCI+Go image. The cost is
+## per-block decompression on first read of that block, not whole-image, so it
+## does not affect runtime behaviour after a block is cached.
+##
+## Block size stays at the tree default of 256 KiB: 1024 KiB compresses
+## slightly better but multiplies the read amplification for the many small
+## LuCI files, and 64 KiB loses too much ratio.
+CONFIG_TARGET_ROOTFS_SQUASHFS=y
+CONFIG_SQUASHFS_XZ=y
+CONFIG_TARGET_SQUASHFS_BLOCK_SIZE=256
+CONFIG_TARGET_SQUASHFS_BLOCK_READERS=4
+CONFIG_TARGET_SQUASHFS_SMALL_READERS=4
+# Only squashfs + initramfs are wanted; every other rootfs format just makes
+# the build slower and the output directory bigger.
+# CONFIG_TARGET_ROOTFS_EXT4FS is not set
+# CONFIG_TARGET_ROOTFS_UBIFS is not set
+# CONFIG_TARGET_ROOTFS_TARGZ is not set
+# CONFIG_TARGET_ROOTFS_CPIOGZ is not set
+# CONFIG_TARGET_ROOTFS_JFFS2 is not set
+# CONFIG_TARGET_ROOTFS_EROFS is not set
+# KALLSYMS_ALL is what actually bloats vmlinux (it keeps every local symbol,
+# not just exported ones); the generic kernel config already leaves it off, so
+# this only pins it against a rebase. CONFIG_STRIP_KERNEL_EXPORTS is
+# deliberately not used: it depends on BROKEN in this tree, so defconfig would
+# drop it and the verification step would fail the build.
+# CONFIG_DEBUG_INFO is not set
+# CONFIG_DEBUG_INFO_DWARF4 is not set
+# CONFIG_DEBUG_KERNEL is not set
+# No opkg/ipk compatibility layer.
+# CONFIG_PER_FEED_PACKAGE is not set
 
 ## Modem data path: qmi_wwan_q with two QMAP channels + quectel-cm proto.
 ## uqmi comes with the AW1000's DEVICE_PACKAGES and pulls upstream qmi_wwan,
@@ -50,6 +105,10 @@ CONFIG_PACKAGE_sms-tool=y
 
 ## Modem pages: SMS conversations, bands, cell scan and lock, AT console
 CONFIG_PACKAGE_luci-app-aw1000-modem=y
+## modeminfo: the SA/serving-cell page from AW1000_BYTE (vendored in the
+## aw1000 feed, see aw1000/luci-app-modeminfo). Reads the modem over sms-tool
+## on the same AT port the modem pages use.
+CONFIG_PACKAGE_luci-app-modeminfo=y
 
 ## Board defaults: wwan interface, LEDs, the theme
 CONFIG_PACKAGE_aw1000-defaults=y
@@ -73,19 +132,119 @@ CONFIG_PACKAGE_luci-app-wol=y
 CONFIG_PACKAGE_etherwake=y
 CONFIG_PACKAGE_luci-app-ddns=y
 CONFIG_PACKAGE_udp-broadcast-relay-redux=y
+## netstat: live per-interface counters and the connection view (Ace1337z)
+CONFIG_PACKAGE_luci-app-netstat=y
+## vnstat: long-term traffic accounting, history kept in /etc/vnstat (see
+## byte/files/etc/config/vnstat) so it survives a reboot
+CONFIG_PACKAGE_vnstat2=y
+CONFIG_PACKAGE_vnstati2=y
+CONFIG_PACKAGE_luci-app-vnstat2=y
 
-## Proxy: Passwall2 only. Nikki (sing-box) and OpenClash are carried in the
+## SQM. The NSS build ships sqm-scripts pinned to the fork with hw_ppe
+## offload (builder patch), so shaping rides the NSS instead of the CPU.
+CONFIG_PACKAGE_sqm-scripts=y
+CONFIG_PACKAGE_luci-app-sqm=y
+
+## Proxy: Passwall2 only, at 26.4.10 with Xray-core 26.3.27 (pinned in
+## build/feeds). Nikki (sing-box/mihomo) and OpenClash are carried in the
 ## feeds so they can be installed later, but all three install the same
 ## TPROXY/nftables hooks and must not be enabled together.
 CONFIG_PACKAGE_luci-app-passwall2=y
+# Nftables transparent proxy (firewall4 is what this tree ships).
+CONFIG_PACKAGE_luci-app-passwall2_Nftables_Transparent_Proxy=y
+CONFIG_PACKAGE_luci-app-passwall2_Iptables_Transparent_Proxy=n
+CONFIG_PACKAGE_luci-app-passwall2_INCLUDE_IPv6_Nat=y
+# Core protocol support. xray-core is a hard dependency of the LuCI app
+# already; the pins in build/feeds make it 26.3.27.
+CONFIG_PACKAGE_luci-app-passwall2_INCLUDE_Shadowsocks_Rust_Client=y
+CONFIG_PACKAGE_luci-app-passwall2_INCLUDE_Shadowsocks_Rust_Server=y
+CONFIG_PACKAGE_luci-app-passwall2_INCLUDE_ShadowsocksR_Libev_Client=y
+CONFIG_PACKAGE_luci-app-passwall2_INCLUDE_ShadowsocksR_Libev_Server=y
+CONFIG_PACKAGE_luci-app-passwall2_INCLUDE_Haproxy=y
+CONFIG_PACKAGE_luci-app-passwall2_INCLUDE_Simple_Obfs=y
+CONFIG_PACKAGE_luci-app-passwall2_INCLUDE_V2ray_Plugin=y
+CONFIG_PACKAGE_luci-app-passwall2_INCLUDE_SingBox=y
+CONFIG_PACKAGE_luci-app-passwall2_INCLUDE_Hysteria=y
+CONFIG_PACKAGE_luci-app-passwall2_INCLUDE_tuic_client=y
+CONFIG_PACKAGE_xray-core=y
+CONFIG_PACKAGE_v2ray-geoip=y
+CONFIG_PACKAGE_v2ray-geosite=y
+CONFIG_PACKAGE_chinadns-ng=y
+CONFIG_PACKAGE_geoview=y
+CONFIG_PACKAGE_tcping=y
+CONFIG_PACKAGE_shadowsocks-rust-sslocal=y
+CONFIG_PACKAGE_shadowsocks-rust-ssserver=y
+CONFIG_PACKAGE_simple-obfs-client=y
+CONFIG_PACKAGE_v2ray-plugin=y
+CONFIG_PACKAGE_haproxy=y
+CONFIG_PACKAGE_sing-box=y
+CONFIG_PACKAGE_hysteria=y
+CONFIG_PACKAGE_dnsmasq-full=y
+CONFIG_PACKAGE_resolveip=y
+# QUIC / HTTP3. Xray and sing-box speak QUIC over UDP/443; the kernel needs
+# the conntrack helper and the nft UDP handling for it to survive NAT, and
+# dnsmasq must not filter HTTPS/SVCB records (filter_aaaa stays 0 in
+# byte/files/etc/config/dhcp for the same reason).
+CONFIG_PACKAGE_kmod-nf-conntrack=y
+CONFIG_PACKAGE_kmod-nf-nat=y
+CONFIG_PACKAGE_kmod-nft-tproxy=y
+CONFIG_PACKAGE_kmod-nft-socket=y
+CONFIG_PACKAGE_kmod-nf-tproxy=y
+CONFIG_PACKAGE_kmod-nf-socket=y
+CONFIG_PACKAGE_kmod-inet-diag=y
+CONFIG_PACKAGE_kmod-tun=y
+CONFIG_PACKAGE_kmod-nf-conntrack-netlink=y
+CONFIG_PACKAGE_kmod-udptunnel4=y
+CONFIG_PACKAGE_kmod-udptunnel6=y
+CONFIG_PACKAGE_kmod-ipt-core=y
+CONFIG_PACKAGE_kmod-ipt-nat=y
+# UCI/JSON helpers the three proxy apps and their LuCI pages rely on
+CONFIG_PACKAGE_luci-lib-jsonc=y
+CONFIG_PACKAGE_luci-compat=y
+CONFIG_PACKAGE_coreutils=y
+CONFIG_PACKAGE_coreutils-base64=y
+CONFIG_PACKAGE_coreutils-nohup=y
+CONFIG_PACKAGE_coreutils-timeout=y
+CONFIG_PACKAGE_curl=y
+CONFIG_PACKAGE_ca-bundle=y
+CONFIG_PACKAGE_ca-certificates=y
+CONFIG_PACKAGE_ip-full=y
+CONFIG_PACKAGE_unzip=y
+CONFIG_PACKAGE_lua=y
+CONFIG_PACKAGE_libuci-lua=y
+
+## Nikki and OpenClash are installed only on request, but everything they
+## need at runtime is in the image so `apk add` does not pull half the tree:
+##   nikki  -> firewall4, kmod-nft-tproxy/socket, kmod-tun, kmod-inet-diag,
+##             kmod-dummy, ip-full, curl, ca-bundle, yq, mihomo
+##   clash  -> dnsmasq-full, bash, curl, ca-bundle, ip-full, ruby, ruby-yaml,
+##             kmod-tun, unzip
+## The kmods above are already selected; these are the userland ones.
+CONFIG_PACKAGE_yq=y
+CONFIG_PACKAGE_bash=y
+CONFIG_PACKAGE_ruby=y
+CONFIG_PACKAGE_ruby-yaml=y
+
+## AdGuard Home: the core from openwrt/packages plus its LuCI app from
+## sirpdboy's repo. Not enabled as the resolver by default - passwall2 and
+## AdGuard both want to own dnsmasq's port 53, so the user picks one.
+CONFIG_PACKAGE_adguardhome=y
+CONFIG_PACKAGE_luci-app-adguardhome=y
 
 ## BYTE runtime: TTL/HopLimit rewrite, MTU clamp, IPv6 sanity, self-check.
-## byte-ttl needs nft and a shell; the rest is coreutils/busybox.
 CONFIG_PACKAGE_nftables=y
 CONFIG_PACKAGE_kmod-nft-core=y
 CONFIG_PACKAGE_kmod-nft-nat=y
 CONFIG_PACKAGE_zram-swap=y
-CONFIG_PACKAGE_vnstat=y
+
+## RJ11 phone port: SLIC kernel module, the daemon and its LuCI page.
+## fxsd drives the AT modem through the ubus at-daemon object, so that tiny
+## daemon is vendored in the aw1000 feed (it otherwise only exists inside the
+## QModem repo, which we do not want as a feed).
+CONFIG_PACKAGE_kmod-aw1000-fxs=y
+CONFIG_PACKAGE_fxsd=y
+CONFIG_PACKAGE_luci-app-fxs=y
+CONFIG_PACKAGE_ubus-at-daemon=y
 
 ## USB storage: mass storage + UAS, common filesystems, automount under
 ## /mnt/<device> (fstab anon_mount, set in aw1000-defaults), browsable from
@@ -102,11 +261,85 @@ CONFIG_PACKAGE_kmod-fs-ext4=y
 CONFIG_PACKAGE_block-mount=y
 CONFIG_PACKAGE_blkid=y
 
-## RJ11 phone port: SLIC kernel module, the daemon and its LuCI page.
-## fxsd drives the AT modem through the ubus at-daemon object, so that tiny
-## daemon is vendored in the aw1000 feed (it otherwise only exists inside the
-## QModem repo, which we do not want as a feed).
-CONFIG_PACKAGE_kmod-aw1000-fxs=y
-CONFIG_PACKAGE_fxsd=y
-CONFIG_PACKAGE_luci-app-fxs=y
-CONFIG_PACKAGE_ubus-at-daemon=y
+## ---------------------------------------------------------------------------
+## Size reduction. Everything here trims the image without changing what the
+## router does: no package below is needed at runtime, or a smaller equivalent
+## is selected instead.
+## ---------------------------------------------------------------------------
+# IPv6 is used, so do not strip it; but drop the legacy tunnelling helpers and
+# the 6to4/6rd glue that nothing on a cellular uplink uses.
+# CONFIG_PACKAGE_6in4 is not set
+# CONFIG_PACKAGE_6rd is not set
+# CONFIG_PACKAGE_6to4 is not set
+# CONFIG_PACKAGE_ds-lite is not set
+# CONFIG_PACKAGE_map is not set
+# CONFIG_PACKAGE_ipip is not set
+# The PPPoE/PPTP/L2TP/3G protocol set: this box dials over QMI, not PPP.
+# CONFIG_PACKAGE_ppp is not set
+# CONFIG_PACKAGE_ppp-mod-pppoe is not set
+# CONFIG_PACKAGE_kmod-pppoe is not set
+# CONFIG_PACKAGE_kmod-pppox is not set
+# CONFIG_PACKAGE_kmod-l2tp is not set
+# CONFIG_PACKAGE_kmod-pptp is not set
+# CONFIG_PACKAGE_kmod-gre is not set
+# CONFIG_PACKAGE_kmod-iptunnel is not set
+# CONFIG_PACKAGE_kmod-iptunnel4 is not set
+# CONFIG_PACKAGE_kmod-iptunnel6 is not set
+# CONFIG_PACKAGE_kmod-sit is not set
+# CONFIG_PACKAGE_kmod-ip6-tunnel is not set
+# Unused wireless drivers/stack pieces: the AW1000 is ath11k only, and the
+# generic mac80211 debug/tracing modules are large.
+# CONFIG_PACKAGE_kmod-ath10k is not set
+# CONFIG_PACKAGE_kmod-ath10k-ct is not set
+# CONFIG_PACKAGE_ath10k-firmware-qca988x is not set
+# CONFIG_PACKAGE_kmod-mac80211-hwsim is not set
+# CONFIG_PACKAGE_kmod-mt76 is not set
+# CONFIG_PACKAGE_kmod-rtw88 is not set
+# CONFIG_PACKAGE_kmod-rtw89 is not set
+# Bluetooth, sound, video, joystick, HID and other input drivers: no hardware.
+# CONFIG_PACKAGE_kmod-bluetooth is not set
+# CONFIG_PACKAGE_kmod-sound-core is not set
+# CONFIG_PACKAGE_kmod-usb-audio is not set
+# CONFIG_PACKAGE_kmod-usb-serial-wwan is not set
+# CONFIG_PACKAGE_kmod-usb-net-cdc-eem is not set
+# CONFIG_PACKAGE_kmod-usb-net-cdc-ether is not set
+# CONFIG_PACKAGE_kmod-usb-net-cdc-mbim is not set
+# CONFIG_PACKAGE_kmod-usb-net-cdc-ncm is not set
+# CONFIG_PACKAGE_kmod-usb-net-cdc-subset is not set
+# CONFIG_PACKAGE_kmod-usb-net-huawei-cdc-ncm is not set
+# CONFIG_PACKAGE_kmod-usb-net-rndis is not set
+# CONFIG_PACKAGE_kmod-usb-net-sierrawireless is not set
+# Filesystems and storage for hardware that is not on this board.
+# NOTE: kmod-scsi-core, kmod-usb-wdm and kmod-fs-squashfs are deliberately NOT
+# in this list - usb-storage, qmi_wwan_q and the rootfs all depend on them.
+# CONFIG_PACKAGE_kmod-fs-cifs is not set
+# CONFIG_PACKAGE_kmod-fs-nfs is not set
+# CONFIG_PACKAGE_kmod-fs-nfs-common is not set
+# CONFIG_PACKAGE_kmod-fs-f2fs is not set
+# CONFIG_PACKAGE_kmod-nvme is not set
+# Crypto: the kernel's own suite covers what WireGuard/Tailscale/passwall need;
+# the extra test vectors and unused algorithms are ~1 MB.
+# CONFIG_PACKAGE_kmod-crypto-test is not set
+# CONFIG_PACKAGE_kmod-crypto-deflate is not set
+# CONFIG_PACKAGE_kmod-crypto-md4 is not set
+# CONFIG_PACKAGE_kmod-crypto-wq is not set
+# CONFIG_PACKAGE_kmod-crypto-echainiv is not set
+# CONFIG_PACKAGE_kmod-crypto-akcipher is not set
+# Debug/profiling tooling that never ships on a router.
+# CONFIG_PACKAGE_kmod-kprobes is not set
+# CONFIG_PACKAGE_kmod-perf-events is not set
+# CONFIG_PACKAGE_perf is not set
+# CONFIG_PACKAGE_gdb is not set
+# CONFIG_PACKAGE_strace is not set
+# CONFIG_PACKAGE_valgrind is not set
+# CONFIG_PACKAGE_tcpdump is not set
+# CONFIG_PACKAGE_lsof is not set
+# CONFIG_PACKAGE_usbutils is not set
+# CONFIG_PACKAGE_pciutils is not set
+# CONFIG_PACKAGE_swap-utils is not set
+# LuCI translations other than English are not selected. They are HIDDEN
+# packages with DEFAULT:=LUCI_LANG_<tag>||(ALL&&m), and the builder sets
+# CONFIG_ALL_KMODS (not CONFIG_ALL), so they stay out of the image without
+# naming each one. Selecting CONFIG_ALL anywhere would pull ~1.5 MB of .lmo
+# files in; do not add it.
+# CONFIG_ALL is not set

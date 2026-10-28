@@ -15,18 +15,33 @@ src-git footstrap_files https://github.com/VizzleTF/luci-app-footstrap-files.git
 # 4IceG's repo, only for its newer sms-tool (preferred over the packages
 # feed's, see feeds.prefer); its LuCI app is not built.
 src-git luci_smstool https://github.com/4IceG/luci-app-sms-tool-js.git^a05daae5d4c5d91205bbdb6aa1930145d98e4481
-# Passwall2 is installed by default (build/config). Nikki and OpenClash are
-# carried in the tree so they can be installed from LuCI afterwards, but they
-# are not enabled: all three want the same TPROXY/nftables hooks, so only one
-# may be installed at a time.
+
+# Passwall2 26.4.10 (tag 26.4.10-1), the release this image ships and the one
+# the Xray pin below is known-good with. Nikki and OpenClash are carried in the
+# tree so they can be installed from LuCI afterwards, but they are not enabled:
+# all three install the same TPROXY/nftables hooks, so only one may be active.
 src-git passwall2 https://github.com/Openwrt-Passwall/openwrt-passwall2.git^4b4b84dc120bb37592ea51e7107ce4fe0083420f
 # passwall2's own dependencies (chinadns-ng, geoview, tcping, Xray-core,
 # v2ray-geodata, shadowsocks-rust, sing-box, hysteria...) are not in
-# openwrt/packages; they come from Passwall's separate packages repo.
-src-git passwall_pkgs https://github.com/xiaorouji/openwrt-passwall-packages.git^19b6d1133fd861312659b3be38f19d52aaf3facf
+# openwrt/packages; they come from Passwall's separate packages repo, pinned at
+# the commit that carries Xray-core 26.3.27 (see build/versions).
+src-git passwall_pkgs https://github.com/xiaorouji/openwrt-passwall-packages.git^d0ebdbb35bd463f5d65455e757027e69aea850d7
+
 src-git nikki https://github.com/nikkinikki-org/OpenWrt-nikki.git^78e1a751d55ed0762811f054ee699049473da7b8
+src-git openclash https://github.com/vernesong/OpenClash.git^e553e82e01c697aefbe1555261a503f425e00ccd
+
+# AdGuard Home: the core is in openwrt/packages, but its LuCI app is not, so
+# it comes from sirpdboy's repo (the maintained one).
+src-git adguardhome https://github.com/sirpdboy/luci-app-adguardhome.git^73ecb5d6a2bddc43e9273bccab2719728a238c1e
+# Ace1337z's netstat page (live per-interface counters, connection view).
+src-git netstat https://github.com/Ace1337z/luci-app-netstat.git^895d2e7b44f3c332f074811b91313430b75407d2
+
 # dotycat: extra AW1000 quality-of-life packages (LED, nssinfo, dstore...).
 # Nothing here is enabled by default, and luci-app-nft-ttl is excluded because
 # it would fight byte-ttl over the same nft rules (see feeds.exclude).
 src-git dotycat https://github.com/dotywrt/dotycat-package.git^fe9f2411189b53c66ddc4f1d91d436bde148923d
+# AW1000 RJ11 phone port, patched with the SLIC driver: kmod-aw1000-fxs +
+# fxsd + luci-app-fxs. This is the phone-port stack (si3226x SLIC, DTMF,
+# ringing, caller ID); ubus-at-daemon, which fxsd drives it through, is
+# vendored in the aw1000 feed.
 src-git fxs https://github.com/Perz3us/openwrt-aw1000-phone.git^901f9dd1fa661fa4858613579fbd83d521565b35

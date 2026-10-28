@@ -9,6 +9,13 @@ luci_smstool/luci-app-sms-tool-js
 # dotycat's luci-app-nft-ttl writes its own /etc/nftables.d/ttl64.nft and a
 # postrouting rule keyed on iifname br-lan. byte-ttl already owns the modem
 # egress rewrite (and does it on the output interface, which is the correct
-# hook); installing both means two rules rewriting the same packets and a
-# LuCI page that silently disagrees with the running config.
+# hook for "everything leaving through the modem"); installing both means two
+# rules rewriting the same packets, and the LuCI page would silently disagree
+# with the running config.
+#
+# Note: this package is from dotycat, not from XT-Martinez - XT's aw1000-feed
+# ships no TTL handling at all. It is excluded because byte-ttl is the
+# superset (TTL, HopLimit, per-family, wwan-only or global), not because of
+# where it comes from. To use the LuCI page instead, drop this line, remove
+# byte-ttl from the overlay, and set nftttl.ttl.enabled=1.
 dotycat/luci-app-nft-ttl

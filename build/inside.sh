@@ -177,3 +177,23 @@ make -j"$(nproc)" || make -j1 V=s
 
 log "images"
 ls -l bin/targets/qualcommax/ipq807x/*aw1000* 2>/dev/null || true
+
+# Size report: the sysupgrade image is what gets flashed, so print it in both
+# bytes and MiB, plus the ten largest files in the rootfs. That makes a
+# regression (a package that pulled in a dependency tree) obvious from the log
+# instead of only at flash time.
+SYSUP="$(ls bin/targets/qualcommax/ipq807x/*aw1000*squashfs-sysupgrade.bin 2>/dev/null | head -1)"
+if [[ -n "$SYSUP" && -f "$SYSUP" ]]; then
+	sz=$(stat -c%s "$SYSUP")
+	printf '\nsysupgrade image: %s bytes (%.1f MiB)\n' "$sz" "$(awk "BEGIN{print $sz/1048576}")"
+fi
+ROOTFS="build_dir/target-aarch64_cortex-a53_musl/root-qualcommax"
+if [[ -d "$ROOTFS" ]]; then
+	printf 'rootfs: %s (%.1f MiB)\n' \
+		"$(du -sh "$ROOTFS" 2>/dev/null | cut -f1)" \
+		"$(du -sm "$ROOTFS" 2>/dev/null | cut -f1)"
+	echo "largest files:"
+	find "$ROOTFS" -type f -printf '%s %p\n' 2>/dev/null |
+		sort -rn | head -10 |
+		awk '{printf "  %6.1f MiB  %s\n", $1/1048576, $2}'
+fi
