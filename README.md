@@ -310,7 +310,7 @@ the build.
 
 ## LuCI apps in the image
 
-Fifteen `luci-app-*` packages. Everything else LuCI-side is a library
+Seventeen `luci-app-*` packages. Everything else LuCI-side is a library
 (`luci-lib-jsonc`, `luci-compat`), a protocol handler (`luci-proto-*`), the
 theme, or the dashboard module.
 
@@ -319,6 +319,8 @@ theme, or the dashboard module.
 | `luci-app-aw1000-modem` | Modem pages: SMS conversations, bands, cell scan and lock, AT console | this repo |
 | `luci-app-modeminfo` | Serving-cell / SA info page | vendored from AW1000_BYTE |
 | `luci-app-fxs` | RJ11 phone port: dialling, history, caller ID | Perz3us/openwrt-aw1000-phone |
+| `luci-app-aw1k-led` | Front-panel LEDs by signal quality. Installed but its daemon is off by default - it and `aw1000-leds` drive the same sysfs LEDs | dotycat |
+| `luci-app-agh-passwall2` | One-click AdGuard Home + PassWall2 DNS setup | wraps Ace1337z/openwrt-agh-passwall2 |
 | `luci-app-passwall2` | Proxy (26.4.10, Xray 26.3.27) | Openwrt-Passwall |
 | `luci-app-sqm` | Smart Queue Management | openwrt/luci |
 | `luci-app-adguardhome` | AdGuard Home UI (core is `adguardhome`) | sirpdboy |
@@ -339,19 +341,45 @@ Available from the feeds but **not** installed: `luci-app-nikki`,
 the dotycat QoL set (`luci-app-aw1k-led`, `luci-app-nssinfo`,
 `luci-app-dstore`, `luci-app-occ`, `luci-app-netstat` from dotycat).
 
-## ubus-at-daemon
+## The RJ11 phone port does not need QModem
 
-Vendored in `aw1000/ubus-at-daemon` from FUjr/QModem `052f8447` (MPL-2.0),
-because the AW1000 phone stack needs it and the QModem feed is not wanted here.
+**Short answer: yes, it works without qmodem. It needs `ubus-at-daemon`, which
+this image vendors.**
 
-This is **not** a qmodem dependency in the sense of pulling qmodem in: `fxsd`
-sends *every* AT command through `ubus call at-daemon sendat` (see
-`modem_at()` in `fxsd/src/modem.c`), unconditionally. Its direct tty code is
-only a liveness probe (`at_ready()`), never a command path. The fxs README says
-the same thing ("fxsd sends AT commands through its at-daemon"). Dropping the
-daemon would leave the phone sitting at "Waiting for the modem" even though the
-modem answers `sms_tool` fine - which is exactly the failure mode the daemon
-exists to prevent.
+The confusion is understandable - the fxs project's README says "QModem (fxsd
+sends AT commands through its at-daemon)", and at-daemon is a package from the
+QModem repo. But the dependency is on the *daemon*, not on QModem the modem
+manager. Nothing in fxsd talks to QModem's config, its dial worker or its
+`network` sections.
+
+The whole chain, verified in the source:
+
+| Piece | Where it comes from | Why |
+|---|---|---|
+| `kmod-aw1000-fxs` | fxs feed | the SLIC driver (si3226x over SPI/PCM) |
+| `fxsd` | fxs feed | dial tone, ringing, DTMF, caller ID |
+| `luci-app-fxs` | fxs feed | the LuCI page |
+| `ubus-at-daemon` | vendored in `aw1000/` | the AT transport fxsd uses |
+| `kmod-usb-serial-option` | `quectel-cm`'s dependency | creates `/dev/ttyUSB*` |
+| AT port | resolved at boot by USB interface 02 | see below |
+
+`fxsd` sends **every** AT command through `ubus call at-daemon sendat` (see
+`modem_at()` in `fxsd/src/modem.c` - unconditional, no fallback). Its direct
+tty code (`at_ready()`) is only a liveness probe, never a command path. So
+without at-daemon the phone sits at "Waiting for the modem" even though the
+modem answers `sms_tool` fine.
+
+That daemon is ~100 KB and does one thing: open a tty, write an AT command,
+read the answer back over ubus. It has no relationship to QModem's data path,
+which is why vendoring it is enough and pulling the QModem feed is not.
+
+### AT port
+
+`fxsd` finds the port itself by USB interface number (`AT_IFACE 2`, Quectel VID
+`2c7c`), not by ttyUSB name, because a port held open across a modem reset can
+come back as a different number. `99-zz-at-daemon-port` applies the same lookup
+to the daemon's config, and `rc.local` uses it for the PCM probe, so all three
+agree even after a reset.
 
 XT-Martinez's feed has no phone stack at all, so there is nothing there to
 compare against; the requirement comes from fxsd itself.
