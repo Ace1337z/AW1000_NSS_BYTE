@@ -79,23 +79,6 @@ apply_patches() {
 apply_patches "$BUILDER/patches/feeds/ppe-nss"
 apply_patches "$FEED/build/patches"
 
-# Extra package patches for the NSS feed (build/patches-nss/<pkg>/*.patch),
-# applied by the package build after its own. The feed is a src-link, so it is
-# replaced by a copy; feeds update re-links it on the next run.
-if compgen -G "$FEED/build/patches-nss/*/*.patch" >/dev/null; then
-	log "nss feed copy"
-	rm -f feeds/nss
-	rm -rf "$WORK/nss-copy"
-	cp -a "$WORK/nss-packages" "$WORK/nss-copy"
-	rm -rf "$WORK/nss-copy/.git"
-	ln -sfn "$WORK/nss-copy" feeds/nss
-	for p in "$FEED"/build/patches-nss/*/*.patch; do
-		pkg="$(basename "$(dirname "$p")")"
-		echo "  $pkg: $(basename "$p")"
-		cp "$p" "feeds/nss/$pkg/patches/"
-	done
-fi
-
 # Patches to the OpenWrt tree itself (build/patches-openwrt/*.patch, -p1).
 for p in "$FEED"/build/patches-openwrt/*.patch; do
 	[[ -e "$p" ]] || continue

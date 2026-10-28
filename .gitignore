@@ -1,6 +1,7 @@
 # Build output: fetched trees, downloads and images.
 /work/
 /out/
+/release/
 
 # Site-specific overlay (Wi-Fi keys, SSH keys), never committed.
 /private-files/

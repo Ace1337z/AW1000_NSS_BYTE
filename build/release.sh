@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# Host side of "build.sh release": after a build without ../private-files,
-# check that nothing site-specific reached the image, then copy the images
-# with fresh sha256sums to ../release/<name>/.
+# Run after a build: check that nothing site-specific reached the image, then
+# copy the images with fresh sha256sums to release/.
 #
-# The check, when ../private-files exists:
+# The check, when private-files/ exists (see build/inside.sh, which overlays
+# it when present and never in CI):
 #   - no private file is in the image's root under the same path with the
 #     same contents;
 #   - none of its secrets and identifiers (Wi-Fi keys and SSIDs, WireGuard
@@ -14,9 +14,9 @@
 set -euo pipefail
 
 FEED_DIR="$(cd -- "$(dirname -- "$0")/.." && pwd)"
-TOP="$(cd -- "$FEED_DIR/.." && pwd)"
-OWRT="$TOP/openwrt"
-PRIVATE="$TOP/private-files"
+WORK="${WORK:-$FEED_DIR/work}"
+OWRT="$WORK/openwrt"
+PRIVATE="$FEED_DIR/private-files"
 BIN="$OWRT/bin/targets/qualcommax/ipq807x"
 ROOT="$OWRT/build_dir/target-aarch64_cortex-a53_musl/root-qualcommax"
 PREFIX=openwrt-qualcommax-ipq807x-arcadyan_aw1000
@@ -84,7 +84,7 @@ fi
 
 rev="$(cat "$BIN/version.buildinfo")"
 name="aw1000-nss-$(date +%Y%m%d)-${rev##*-}"
-out="$TOP/release/$name"
+out="$FEED_DIR/release/$name"
 
 log "collect into $out"
 rm -rf "$out"
@@ -96,7 +96,7 @@ cp "$BIN/config.buildinfo" "$BIN/feeds.buildinfo" "$BIN/version.buildinfo" "$out
 {
 	echo "OpenWrt $rev (openwrt-nss-edma), built $(date -u +%Y-%m-%dT%H:%MZ)"
 	for d in openwrt nss-packages builder-reference aw1000-feed; do
-		printf '%-18s %s\n' "$d" "$(git -C "$TOP/$d" log -1 --format='%h %s' 2>/dev/null || echo '-')"
+		printf '%-18s %s\n' "$d" "$(git -C "$WORK/$d" log -1 --format='%h %s' 2>/dev/null || echo '-')"
 	done
 } >"$out/SOURCES.txt"
 (cd "$out" && sha256sum -- * >sha256sums)

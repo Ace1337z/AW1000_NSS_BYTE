@@ -141,8 +141,14 @@ at a time - the patches fail loudly (not silently) when they stop applying.
 - `byte/files/` — the BYTE runtime overlay (below), copied into the image.
 - `build/patches/<feed>/` — patches applied to `feeds/<feed>`.
 - `build/patches-openwrt/` — patches applied to the OpenWrt tree itself.
-- `build/patches-nss/<package>/` — extra package patches for the `nss` feed,
-  copied next to the package's own (the feed becomes a writable copy).
+
+aw1000-feed shipped two extra `qca-nss-drv` patches (0119/0120) that patched
+`nss_rmnet_rx_bind_xmit()`. That function does not exist in the nss-drv source
+any branch of `xhikarishii/nss-packages` pins (`d5ee67b`, 783-line
+`nss_rmnet_rx.c`), and no feed patch creates it - the raw-IP path in this
+source goes through `xmit_cb` in `nss_core.c` instead. Both patches were
+dropped: they can never apply, and inside.sh aborts on a patch that does not
+apply rather than silently skipping it.
 
 ## BYTE runtime (`byte/`)
 
