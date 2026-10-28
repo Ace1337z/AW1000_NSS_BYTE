@@ -8,8 +8,12 @@ RJ11 phone port), on the NSS-EDMA tree with **apk** as the package manager.
 - NSS feed: `xhikarishii/nss-packages`
 - Theme: footstrap + the luci-mod-dashboard widgets
 - Package manager: apk (`--allow-untrusted`; packages are unsigned)
-- Proxy: passwall2 installed by default; nikki and OpenClash are carried in
-  the feeds and can be installed from LuCI afterwards (never two at once)
+- Proxy: passwall2 **26.4.10** with **Xray-core 26.3.27** installed by
+  default; Nikki and OpenClash are carried in the feeds (with their runtime
+  deps already in the image) and can be installed from LuCI afterwards -
+  never two at once
+- Also in the image: SQM, AdGuard Home + LuCI app, netstat, vnstat2,
+  modeminfo, the RJ11 phone stack
 - Defaults: LAN `192.168.1.1`, SSID `BYTE` (open), root password empty
 
 ## Screenshots
@@ -162,6 +166,8 @@ quectel-cm + `qmi_wwan_q` data path.
 | `etc/init.d/byte-v6` + `byte-v6-check` | Keeps IPv6 enabled, but demotes it to IPv4 when the carrier delegates a prefix with no routable WAN address. Without it clients prefer a dead IPv6 path and "the internet is fine but nothing loads". |
 | `etc/init.d/byte-affinity` | Spreads modem packet processing (RPS/XPS on `wwan*`, `rmnet*`, `br-lan`) across all four cores. The modem's USB interrupts otherwise all land on one core, which saturates long before the link does once passwall2 is doing userspace crypto. |
 | `etc/init.d/byte-selfcheck` | Verifies the tuning at boot and on every `ifup`: governor pinned, `fq`/`bbr`, MTU probing, conntrack and socket buffer ceilings. Logs `byte-selfcheck: OK` or the mismatches - it does not fail the boot. |
+| `etc/vnstat.conf` | vnStat with `DatabaseDir "/etc/vnstat"`. The package default is `/var/lib/vnstat`, which is tmpfs: the database and every monthly/yearly total is lost on reboot. `/etc` is the persistent overlay. |
+| `etc/uci-defaults/99-byte` | One-shot runtime defaults, guarded by `system.@system[0].byte_defaults`. Named `99-` so it runs *after* the NSS feed's `98-nss-offload`, which is what makes the `packet_steering=1` override stick. |
 | `etc/init.d/byte-tailscale-gate` + `byte-ts-should-start` | Starts `tailscaled` only once a state file with real credentials exists, instead of holding ~13 MB of private RSS on routers that never use it. Fails open: anything ambiguous means start. |
 | `usr/bin/nss-offload` | `nss-offload on\|off\|status` toggles NSS/ECM flow offload. **Off by default**: ECM bypasses netfilter, so offloaded flows keep their original TTL and defeat the rewrite. |
 | `etc/rc.local` | Every boot: re-asserts the TTL service and ECM-off, then brings up the RJ11 phone port in the background (PCM slave check via `AT+QDAI`, waits for the `at-daemon` ubus object, starts `fxsd`) and self-heals `tailscale0` when it comes up with no address. |
@@ -194,3 +200,100 @@ apk add --allow-untrusted <package>
 Nikki and OpenClash are carried in the tree but not installed, because they
 install the same TPROXY/nftables hooks as passwall2. Only one of the three may
 be active at a time.
+
+## Cellular offload (NSS)
+
+Two halves, both required, and both are in `build/config`:
+
+1. `CONFIG_NSS_DRV_RMNET_ENABLE` + `CONFIG_NSS_DRV_C2C_ENABLE` build
+   `qca-nss-drv`'s `rmnet_rx` node support and give the n2h node its core-1
+   hop.
+2. `CONFIG_PACKAGE_kmod-rmnet-nss` builds the `rmnet-nss` module from the nss
+   feed's `wwan/driver/rmnet-nss`. It publishes `rmnet_nss_callbacks`, and
+   `rmnet_nss_xmit()` is what strips the 14-byte Ethernet header the firmware
+   adds to accelerated uplink packets.
+
+`rmnet-nss` only exists on the nss feed's `aw1000-nss` branch, which is why
+`build/versions` pins that branch rather than `NSS-12.5-K6.x`.
+
+What this image does **not** do is wire `qmi_wwan_q`'s own rmnet_nss hooks:
+that needs `-DCONFIG_QCA_NSS_DRV`, and the package deliberately does not pass
+it, because the driver's own hook would claim the same `rx_handler` the
+`qca-nss-drv` binder wants. So the modem path runs on the CPU. That is also
+what XT-Martinez's proven `aw1000-feed` does - its `qmi_wwan_q` is
+byte-identical to this one and its config sets the same two NSS symbols.
+
+In practice this matters less than it sounds: `byte-ttl` keeps ECM off by
+default, because ECM bypasses netfilter entirely and offloaded flows would
+keep their original TTL. Offload and TTL rewriting are mutually exclusive on
+this box; the image chooses TTL. Run `nss-offload on` to trade one for the
+other.
+
+## Proxy versions
+
+| Package | Version | Source |
+|---|---|---|
+| `luci-app-passwall2` | 26.4.10 (tag `26.4.10-1`) | `Openwrt-Passwall/openwrt-passwall2` |
+| `xray-core` | 26.3.27 | `xiaorouji/openwrt-passwall-packages` @ `d0ebdbb` |
+| `sing-box` | 1.13.4 | same |
+| `chinadns-ng` | 2025.08.09 | same |
+
+The passwall dependency feed is pinned at the commit that carries Xray 26.3.27
+(`d0ebdbb`, "xray-core: update to 26.3.27") rather than at its branch head,
+which carries a much newer Xray. Bumping `PASSWALL_PKGS_SHA` in
+`build/versions` moves Xray; keep it in step with the passwall2 tag.
+
+Nikki (sing-box/mihomo) and OpenClash are **not** installed, but everything
+they need at runtime is: `yq`, `bash`, `ruby`, `ruby-yaml`, `kmod-tun`,
+`kmod-nft-tproxy`, `kmod-nft-socket`, `kmod-inet-diag`, `ip-full`, `curl`,
+`ca-bundle`, `dnsmasq-full`. Installing one of them does not pull a dependency
+tree, and only one of the three may be active at a time - they all install the
+same TPROXY/nftables hooks.
+
+QUIC/HTTP3 works through all three: the conntrack helper, `nf-tproxy` /
+`nft-tproxy` and `nf-socket` / `nft-socket` are built in, and
+`filter_aaaa`/`filter_a` are off in `etc/config/dhcp` so HTTPS/SVCB records
+reach the clients.
+
+## Packet steering
+
+Enabled (`network.@globals[0].packet_steering=1`), against the NSS feed's
+default of 0. The reasoning and the measurement it contradicts are in
+`byte/files/etc/uci-defaults/99-byte`; in short, this image runs passwall2,
+where the CPU - not the NSS - handles the encrypted flows, so spreading the
+receive path over four cores is worth more than the raw offload throughput the
+NSS-optimised setting buys.
+
+To go back: `uci set network.@globals[0].packet_steering='0'`.
+
+## Image size
+
+The sysupgrade image is what gets flashed, and `build/inside.sh` prints its
+size, the rootfs size and the ten largest files at the end of every build, so
+a regression is visible in the log rather than at flash time.
+
+What trims the image without changing behaviour:
+
+- `CONFIG_SQUASHFS_XZ=y` - `image.mk` then runs `mksquashfs` with
+  `-comp xz -Xpreset 9 -Xe` instead of gzip. Per-block decompression cost only,
+  not whole-image.
+- 256 KiB squashfs blocks (the tree default): 1 MiB compresses better but
+  multiplies read amplification for LuCI's many small files.
+- Only squashfs + initramfs as rootfs formats.
+- `KALLSYMS_ALL` off (already the generic default; pinned so a rebase cannot
+  flip it).
+- PPP/PPPoE/L2TP/PPTP and the tunnel helpers are off - this box dials QMI.
+- Foreign wireless (ath10k/mt76/rtw88/rtw89), bluetooth, audio, SATA/NVMe, and
+  the NFS/CIFS/F2FS filesystem modules are off.
+- Debug/profiling tools (gdb, strace, perf, valgrind, tcpdump, lsof) are off.
+- LuCI translations stay out: they are `HIDDEN` with
+  `DEFAULT:=LUCI_LANG_<tag>||(ALL&&m)` and the builder sets `CONFIG_ALL_KMODS`,
+  not `CONFIG_ALL`.
+
+Deliberately **kept** even though they look like candidates:
+`kmod-usb-wdm` (a hard dependency of `qmi_wwan_q`), `kmod-scsi-core`
+(`usb-storage` needs it), `kmod-fs-squashfs` (the rootfs), and the crypto
+hash/crc32c modules (WireGuard, Tailscale, the NSS stack).
+`CONFIG_STRIP_KERNEL_EXPORTS` is **not** used: it depends on `BROKEN` in this
+tree, so defconfig would drop it and the symbol-verification step would fail
+the build.
