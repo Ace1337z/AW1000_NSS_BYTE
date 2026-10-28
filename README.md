@@ -342,25 +342,22 @@ the build.
 
 ## LuCI apps in the image
 
-Seventeen `luci-app-*` packages. Everything else LuCI-side is a library
-(`luci-lib-jsonc`, `luci-compat`), a protocol handler (`luci-proto-*`), the
-theme, or the dashboard module.
+Eleven `luci-app-*` packages are in the image. Everything else LuCI-side is a
+library (`luci-lib-jsonc`, `luci-compat`), a protocol handler (`luci-proto-*`),
+the theme, or the dashboard module.
 
 | App | What it is | Source |
 |---|---|---|
 | `luci-app-aw1000-modem` | Modem pages: SMS conversations, bands, cell scan and lock, AT console | this repo |
 | `luci-app-modeminfo` | Serving-cell / SA info page | vendored from AW1000_BYTE |
 | `luci-app-fxs` | RJ11 phone port: dialling, history, caller ID | Perz3us/openwrt-aw1000-phone |
-| `luci-app-aw1k-led` | Front-panel LEDs by signal quality. Installed but its daemon is off by default - it and `aw1000-leds` drive the same sysfs LEDs | dotycat |
 | `luci-app-agh-passwall2` | One-click AdGuard Home + PassWall2 DNS setup | wraps Ace1337z/openwrt-agh-passwall2 |
 | `luci-app-passwall2` | Proxy (26.4.10, Xray 26.3.27) | Openwrt-Passwall |
 | `luci-app-sqm` | Smart Queue Management | openwrt/luci |
-| `luci-app-adguardhome` | AdGuard Home UI (core is `adguardhome`) | sirpdboy |
 | `luci-app-netstat` | Live per-interface counters + connections | Ace1337z |
 | `luci-app-vnstat2` | Long-term traffic graphs (`vnstat2`, `vnstati2`) | openwrt/luci |
 | `luci-app-ddns` | Dynamic DNS | openwrt/luci |
 | `luci-app-wol` | Wake-on-LAN (`etherwake` included, the app does not pull it) | openwrt/luci |
-| `luci-app-tailscale-community` | Tailscale UI | openwrt/luci |
 | `luci-app-footstrap-files` | File manager for the Footstrap theme | VizzleTF |
 | `luci-mod-dashboard` | Status -> Dashboard page (the modem/thermal/NSS widgets) | openwrt/luci |
 | `luci-theme-footstrap` | The theme itself | VizzleTF |
@@ -368,10 +365,24 @@ theme, or the dashboard module.
 Plus `luci-proto-quectel` (the `quectel` netifd protocol form) and
 `luci-proto-wireguard`.
 
-Available from the feeds but **not** installed: `luci-app-nikki`,
-`luci-app-openclash`, `luci-app-nft-ttl` (excluded, see `feeds.exclude`), and
-the dotycat QoL set (`luci-app-aw1k-led`, `luci-app-nssinfo`,
-`luci-app-dstore`, `luci-app-occ`, `luci-app-netstat` from dotycat).
+### Built, published, not in the image
+
+These are compiled and published next to the image so `apk add` works on a
+running router, but they are not baked in - each is either large or mutually
+exclusive with something the image already does:
+
+| Package | Why it is not in the image | Install with |
+|---|---|---|
+| `adguardhome` + `luci-app-adguardhome` | ~30 MB Go binary plus a web root, for a minority use case. It also wants to own port 53, which passwall2 already uses. | `apk add --allow-untrusted adguardhome luci-app-adguardhome`, then use **Services → AdGuard + PassWall2** (that page wires the DNS chain for you) |
+| `tailscale` + `luci-app-tailscale-community` | `tailscaled` is ~13 MB of private RSS. `byte-tailscale-gate` is already installed and starts it only once credentials exist, so installing later behaves identically. | `apk add --allow-untrusted tailscale luci-app-tailscale-community` |
+| `luci-app-aw1k-led` | Its `led-status` daemon writes the same `blue:5g`/`blue:signal`/`green:wifi` sysfs entries as `aw1000-leds`, so only one may run. `aw1000-leds` keeps the panel. | see the comment in `build/config` |
+| `luci-app-nikki` | Installs the same TPROXY/nftables hooks as passwall2. One proxy at a time. | `apk add --allow-untrusted luci-app-nikki` |
+| `luci-app-openclash` | Same conflict as nikki. | `apk add --allow-untrusted luci-app-openclash` |
+| `luci-app-nft-ttl` | Writes its own `ttl64.nft` and a `br-lan` postrouting rule; `byte-ttl` already owns the modem egress rewrite. Excluded in `feeds.exclude`. | drop that line and rebuild |
+| dotycat QoL (`luci-app-nssinfo`, `luci-app-dstore`, `luci-app-occ`) | Optional extras, no conflict. | `apk add --allow-untrusted <name>` |
+
+Every dependency those packages declare is already in the image (checked against
+each Makefile), so installing one does not pull a dependency tree.
 
 ## The RJ11 phone port does not need QModem
 
