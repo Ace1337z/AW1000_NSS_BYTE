@@ -77,6 +77,8 @@ apply_patches() {
 	shopt -u nullglob
 }
 apply_patches "$BUILDER/patches/feeds/ppe-nss"
+# This repo carries no feed patches today; the call is kept so a future
+# build/patches/<feed>/*.patch is picked up without touching this script.
 apply_patches "$FEED/build/patches"
 
 # Patches to the OpenWrt tree itself (build/patches-openwrt/*.patch, -p1).
