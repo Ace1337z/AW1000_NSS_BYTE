@@ -1,0 +1,23 @@
+#!/bin/sh
+# Keep luci-app-aw1k-led's led-status daemon OFF by default.
+#
+# aw1000-defaults ships aw1000-leds, which owns the front-panel LEDs (blue:5g,
+# blue:signal, green:wifi) and drives them from the modem's AT-reported signal
+# quality, 5G registration and traffic. luci-app-aw1k-led ships led-status,
+# which writes the SAME sysfs entries from its own SNR thresholds.
+#
+# Running both means two daemons fighting over one LED: whichever wrote last
+# wins, the LED flickers between two colour schemes, and the LuCI page shows a
+# state that may not be what is on the panel. Only one may run.
+#
+# The package's own 99-set uci-defaults enables led-status. uci-defaults run in
+# lexical order and this file sorts after it, so disabling here wins. The user
+# can switch with the two commands in /etc/config/aw1000_leds' comment or in the
+# LED controller page.
+if [ -x /etc/init.d/led-status ]; then
+	/etc/init.d/led-status disable 2>/dev/null
+	/etc/init.d/led-status stop 2>/dev/null
+	logger -t aw1000-leds "led-status left disabled; aw1000-leds owns the panel"
+fi
+
+exit 0

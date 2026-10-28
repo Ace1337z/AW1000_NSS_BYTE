@@ -3,7 +3,7 @@ config ubus-at-daemon 'main'
     option config_file '/etc/ubus-at-daemon.json'
 
 config port
-    option at_port '/dev/ttyUSB3'
+    option at_port '/dev/ttyUSB2'
     option baudrate '115200'
     option databits '8'
     option parity '0'

@@ -1,0 +1,24 @@
+#!/bin/sh
+# Point ubus-at-daemon at the modem's first AT port, resolved by USB interface.
+#
+# fxsd's AT_IFACE is 2, so the daemon must be told the port for interface 2.
+# The ttyUSB number is not stable: a port held open across a modem reset can
+# come back as a different number, and a config pinned to ttyUSB2 then sends
+# every AT command into a device that no longer exists.
+#
+# aw1000-modem-ports already does this lookup for the LED daemon (interface 3)
+# and the LuCI modem pages (interface 2); reuse it so all three agree.
+
+[ -x /usr/sbin/aw1000-modem-ports ] || exit 0
+uci -q get ubus-at-daemon.port >/dev/null 2>&1 || exit 0
+
+at_port="$(/usr/sbin/aw1000-modem-ports port 02 2>/dev/null)"
+[ -n "$at_port" ] || exit 0
+
+if [ "$(uci -q get ubus-at-daemon.port.at_port)" != "$at_port" ]; then
+	uci set ubus-at-daemon.port.at_port="$at_port"
+	uci commit ubus-at-daemon
+	logger -t ubus-at-daemon "AT port set to $at_port (interface 02)"
+fi
+
+exit 0

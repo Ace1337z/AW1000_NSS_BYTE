@@ -1,0 +1,14 @@
+{
+	"admin/services/agh-passwall2": {
+		"title": "AdGuard + PassWall2",
+		"order": 45,
+		"action": {
+			"type": "view",
+			"path": "agh-passwall2/install"
+		},
+		"depends": {
+			"acl": [ "luci-app-agh-passwall2" ],
+			"uci": { "dhcp": true }
+		}
+	}
+}

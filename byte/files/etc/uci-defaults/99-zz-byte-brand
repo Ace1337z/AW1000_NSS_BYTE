@@ -1,0 +1,40 @@
+#!/bin/sh
+# Append the AW1000_NSS_BYTE brand CSS to Footstrap's generated stylesheet.
+#
+# Why append instead of shipping a second <link>:
+#   - cascade.css is generated at build time by the theme's build-css.sh, so a
+#     file we drop into the overlay is not part of it and there is no <link>
+#     for us to add without patching a 150-line ucode template (which breaks on
+#     every theme update).
+#   - LuCI's menu.d "css" property would work, but it is per-page: the brand
+#     mark is in header.ut, which renders on every page.
+#   - Appending to cascade.css is one idempotent line, and if the theme ever
+#     changes its class names our rules simply stop matching - the original
+#     OpenWrt mark stays visible instead of the header breaking.
+#
+# The @import has to be first in a stylesheet, so it cannot be appended; the
+# file is inlined instead, which also saves a request.
+
+CSS=/www/luci-static/footstrap/byte-brand.css
+TARGET=/www/luci-static/footstrap/cascade.css
+MARK="/* AW1000_NSS_BYTE brand */"
+
+[ -f "$CSS" ] || exit 0
+[ -f "$TARGET" ] || exit 0
+
+# Already applied (survives a settings-keeping sysupgrade).
+grep -qF "$MARK" "$TARGET" 2>/dev/null && exit 0
+
+# /www is on the overlay here, so this write is persistent. On a squashfs-only
+# /www it would be lost on reboot; guard so we do not fail the boot in that case.
+if ! { printf '\n%s\n' "$MARK"; cat "$CSS"; } >>"$TARGET" 2>/dev/null; then
+	logger -t byte-brand "could not append brand CSS (read-only rootfs?); logo unchanged"
+	exit 0
+fi
+
+# LuCI caches the stylesheet by mtime+hash in the browser; nothing to do on the
+# server side, but drop the index cache so a stale page picks it up next load.
+rm -f /tmp/luci-indexcache* 2>/dev/null
+
+logger -t byte-brand "brand CSS applied to cascade.css"
+exit 0

@@ -1,0 +1,47 @@
+/*
+ * AW1000_NSS_BYTE -- Footstrap branding.
+ *
+ * The theme draws the OpenWrt ring mark as an inline <svg> inside .fs-logo in
+ * header.ut, and as /luci-static/footstrap/logo.svg for the tab favicon. We
+ * replace the header mark with a "B" and leave the template alone: overriding
+ * a 150-line ucode template would break on every theme update, while hiding one
+ * child and painting a background is inert if the theme renames the wrapper.
+ *
+ * The B is drawn as a mask (not an <img>) so it inherits the same colour as
+ * the theme's own ring: cyan in light mode, near-white in dark mode. Both
+ * selectors are guarded with :has() support in mind - if a browser cannot
+ * match, the original OpenWrt mark simply stays visible.
+ */
+
+/* Hide the theme's inline ring SVG inside the brand box. */
+.fs-logo > svg {
+	display: none;
+}
+
+/* Paint the B in its place, sized to the 20px the theme gives the ring. */
+.fs-logo {
+	background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Cpath fill-rule='evenodd' fill='%2300b5e2' d='M18 8h34c13.8 0 22 6.6 22 18.2 0 7.1-3.6 12.4-9.6 15.1 7.9 2.4 12.6 8.5 12.6 17.1C77 71.8 67.6 79 52.4 79H18V8zm17.6 14.6v13.9h13.1c5 0 8-2.6 8-6.9 0-4.4-3-7-8-7h-13.1zm0 27.3v14.5h14.6c5.4 0 8.7-2.8 8.7-7.3 0-4.6-3.3-7.2-8.7-7.2H35.6z'/%3E%3C/svg%3E");
+	background-repeat: no-repeat;
+	background-position: center;
+	background-size: 20px 20px;
+}
+
+/*
+ * The theme keeps a 1px hairline border on the brand box for the ring. With a
+ * solid glyph in it the box reads as a button, so drop the border and let the
+ * B stand on its own.
+ */
+.fs-logo {
+	border-color: transparent;
+}
+
+/* Sysauth (login) page: the theme shows the same mark, larger. */
+.fs-sysauth .fs-logo,
+.sysauth .fs-logo {
+	background-size: 32px 32px;
+}
+
+/* Dark mode: the ring flips to near-white; make the B match. */
+:root[data-darkmode="true"] .fs-logo {
+	background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Cpath fill-rule='evenodd' fill='%23e6f4fb' d='M18 8h34c13.8 0 22 6.6 22 18.2 0 7.1-3.6 12.4-9.6 15.1 7.9 2.4 12.6 8.5 12.6 17.1C77 71.8 67.6 79 52.4 79H18V8zm17.6 14.6v13.9h13.1c5 0 8-2.6 8-6.9 0-4.4-3-7-8-7h-13.1zm0 27.3v14.5h14.6c5.4 0 8.7-2.8 8.7-7.3 0-4.6-3.3-7.2-8.7-7.2H35.6z'/%3E%3C/svg%3E");
+}

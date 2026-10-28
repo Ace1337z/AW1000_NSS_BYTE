@@ -122,8 +122,13 @@ CONFIG_PACKAGE_luci-app-footstrap-files=y
 CONFIG_PACKAGE_btop=y
 CONFIG_PACKAGE_iperf3=y
 CONFIG_PACKAGE_htop=y
-CONFIG_PACKAGE_tailscale=y
-CONFIG_PACKAGE_luci-app-tailscale-community=y
+## Tailscale: NOT installed, available from the feeds. tailscaled is ~13 MB
+## of private RSS and the tailnet is a minority use case; `apk add tailscale
+## luci-app-tailscale-community` installs it. byte-tailscale-gate (in the
+## overlay) is already there and starts it only once credentials exist, so it
+## behaves the same when installed later.
+# CONFIG_PACKAGE_tailscale is not set
+# CONFIG_PACKAGE_luci-app-tailscale-community is not set
 CONFIG_PACKAGE_wireguard-tools=y
 CONFIG_PACKAGE_luci-proto-wireguard=y
 CONFIG_PACKAGE_qrencode=y
@@ -134,6 +139,15 @@ CONFIG_PACKAGE_luci-app-ddns=y
 CONFIG_PACKAGE_udp-broadcast-relay-redux=y
 ## netstat: live per-interface counters and the connection view (Ace1337z)
 CONFIG_PACKAGE_luci-app-netstat=y
+## AW1K LED controller: colour-codes the front-panel LEDs by signal quality.
+## NOTE: its led-status daemon and aw1000-defaults' aw1000-leds drive the SAME
+## sysfs LEDs (blue:5g, blue:signal, green:wifi), so only one may run. The
+## package is installed but its daemon is NOT enabled by default - aw1000-leds
+## owns the LEDs out of the box. Switch with:
+##   /etc/init.d/aw1000-leds disable; /etc/init.d/aw1000-leds stop
+##   /etc/init.d/led-status enable;  /etc/init.d/led-status start
+## and set aw1000_leds.main.enabled=0 so a reboot does not bring it back.
+CONFIG_PACKAGE_luci-app-aw1k-led=y
 ## vnstat: long-term traffic accounting, history kept in /etc/vnstat (see
 ## byte/files/etc/config/vnstat) so it survives a reboot
 CONFIG_PACKAGE_vnstat2=y
@@ -213,29 +227,77 @@ CONFIG_PACKAGE_unzip=y
 CONFIG_PACKAGE_lua=y
 CONFIG_PACKAGE_libuci-lua=y
 
-## Nikki and OpenClash are installed only on request, but everything they
-## need at runtime is in the image so `apk add` does not pull half the tree:
-##   nikki  -> firewall4, kmod-nft-tproxy/socket, kmod-tun, kmod-inet-diag,
-##             kmod-dummy, ip-full, curl, ca-bundle, yq, mihomo
-##   clash  -> dnsmasq-full, bash, curl, ca-bundle, ip-full, ruby, ruby-yaml,
-##             kmod-tun, unzip
-## The kmods above are already selected; these are the userland ones.
+## Nikki, OpenClash and AdGuard Home are installed only on request, but every
+## dependency each of them declares is already in the image, so `apk add`
+## resolves offline against the image's own packages and does not pull a tree.
+##
+## Checked against each Makefile:
+##   nikki            +ca-bundle +curl +yq firewall4 +ip-full +kmod-inet-diag
+##                    +kmod-nft-socket +kmod-nft-tproxy +kmod-tun +kmod-dummy
+##                    +mihomo
+##   mihomo-meta      +ca-bundle +ip-full +kmod-inet-diag +kmod-tun
+##   luci-app-nikki   +luci-base +nikki
+##   luci-app-openclash +dnsmasq-full +bash +curl +ca-bundle +ip-full +ruby
+##                    +ruby-yaml +kmod-tun +unzip
+##   adguardhome      +ca-bundle          (static Go binary, nothing else)
+##   luci-app-adguardhome +ca-certs +curl (ca-certs is PROVIDED by
+##                    ca-certificates, already selected)
+##
+## The kmods and firewall4/dnsmasq-full are selected above; these are the
+## userland ones plus the two kmods that were missing.
 CONFIG_PACKAGE_yq=y
 CONFIG_PACKAGE_bash=y
 CONFIG_PACKAGE_ruby=y
 CONFIG_PACKAGE_ruby-yaml=y
+CONFIG_PACKAGE_kmod-dummy=y
+CONFIG_PACKAGE_firewall4=y
 
-## AdGuard Home: the core from openwrt/packages plus its LuCI app from
-## sirpdboy's repo. Not enabled as the resolver by default - passwall2 and
-## AdGuard both want to own dnsmasq's port 53, so the user picks one.
-CONFIG_PACKAGE_adguardhome=y
-CONFIG_PACKAGE_luci-app-adguardhome=y
+## AdGuard Home: NOT installed, available from the feeds.
+##
+## It is a ~30 MB Go binary plus a web root; baking it into the image costs
+## more space than most of the rest of the added packages combined, and the
+## people who want it are a minority. It is built as a package and published
+## next to the image, so `apk add adguardhome luci-app-adguardhome` installs it
+## on demand. luci-app-agh-passwall2 (below) is the one-click installer for the
+## AdGuard + PassWall2 DNS chain.
+# CONFIG_PACKAGE_adguardhome is not set
+# CONFIG_PACKAGE_luci-app-adguardhome is not set
+## Dependencies those two need are already in the image so the on-demand
+## install does not pull a tree: ca-bundle, curl, and the nft/conntrack set
+## listed under QUIC above. AdGuard Home itself is a static Go binary and
+## needs nothing else at runtime.
 
 ## BYTE runtime: TTL/HopLimit rewrite, MTU clamp, IPv6 sanity, self-check.
 CONFIG_PACKAGE_nftables=y
 CONFIG_PACKAGE_kmod-nft-core=y
 CONFIG_PACKAGE_kmod-nft-nat=y
+
+## RAM swap via zram: 433 MB of compressed swap on a 1 GB box.
+##
+## zram-swap is the script; kmod-zram is what it needs, and the compressor is a
+## separate module. lzo-rle is chosen in byte/files/etc/config/system because it
+## is the fastest and the only one this kernel ships: CONFIG_CRYPTO_LZ4 is off
+## and there is no *lz4* module in /lib/modules, so configuring 'lz4' makes
+## zram-swap log "compression algorithm 'lz4' is not supported", exit 0 anyway,
+## and leave a 433 MB device with 0 kB of swap. Pinning the backend here means
+## the symbol cannot be silently dropped by a rebase.
 CONFIG_PACKAGE_zram-swap=y
+CONFIG_PACKAGE_kmod-zram=y
+CONFIG_PACKAGE_kmod-lib-lzo=y
+CONFIG_KERNEL_ZRAM_BACKEND_LZO=y
+CONFIG_KERNEL_ZRAM_DEF_COMP_LZORLE=y
+# lz4/lz4hc/zstd backends stay off: no module and no userspace consumer.
+# CONFIG_KERNEL_ZRAM_BACKEND_LZ4 is not set
+# CONFIG_KERNEL_ZRAM_BACKEND_LZ4HC is not set
+# CONFIG_KERNEL_ZRAM_BACKEND_ZSTD is not set
+# Writeback is forced off by the kernel package's own KCONFIG
+# (CONFIG_ZRAM_WRITEBACK=n): it would need a backing block device, and there is
+# none on this board. Not a Kconfig symbol here, so it is not set from this
+# file.
+
+## One-click AdGuard Home + PassWall2 DNS setup (Ace1337z's installer, wrapped
+## in a LuCI page). Both target packages are installed on demand, not baked in.
+CONFIG_PACKAGE_luci-app-agh-passwall2=y
 
 ## RJ11 phone port: SLIC kernel module, the daemon and its LuCI page.
 ## fxsd drives the AT modem through the ubus at-daemon object, so that tiny

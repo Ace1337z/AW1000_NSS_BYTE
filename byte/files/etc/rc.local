@@ -34,7 +34,16 @@ fi
 #   works; restart the modem once when it was master
 # - start fxsd now that the SLIC patch is present
 (
-	ATPORT="/dev/ttyUSB3"
+	# Resolve the AT port by USB interface number, not by ttyUSB number: a
+	# port held open across a modem reset can come back under a different
+	# name (ttyUSB3 -> ttyUSB4), and every tool pinned to the old name then
+	# fails. aw1000-modem-ports already does this lookup for the LED daemon
+	# (interface 3 = second AT port); fxsd uses interface 2 for the same
+	# reason. Fall back to the old fixed name if the helper is missing.
+	# fxsd's AT_IFACE is 2 (the first AT port), so the probe must use the
+	# same port fxsd will drive, not the LED daemon's second AT port.
+	ATPORT="$(/usr/sbin/aw1000-modem-ports port 02 2>/dev/null)"
+	[ -n "$ATPORT" ] || ATPORT="/dev/ttyUSB3"
 	QDAI_SLAVE="AT+QDAI=x,1,0,4,0,0,1,1"
 
 	# Stale guard left by a reboot keeps fxsd from starting; clear it.
