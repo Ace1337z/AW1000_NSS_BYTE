@@ -60,17 +60,23 @@ jobs:
       - name: Fetch pinned trees and build
         run: |
           chmod +x build/build.sh build/inside.sh
-          ./build/build.sh all
+          ./build/build.sh all 2>&1 | tee build.log
+          exit ${PIPESTATUS[0]}
 
       - name: Collect artifacts
+        if: always()
         run: |
           mkdir -p out
-          cp -a work/openwrt/bin/targets/qualcommax/ipq807x/. out/
+          cp -a work/openwrt/bin/targets/qualcommax/ipq807x/. out/ 2>/dev/null || true
+          # Keep the build log with the artifacts: without it a failure is
+          # just "exit code 1" and says nothing about why.
+          cp build.log out/build.log 2>/dev/null || true
           ls -l out
 
-      - name: Upload images
+      - name: Upload images and build log
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: aw1000-nss-byte-images
           path: out/*
-          if-no-files-found: error
+          if-no-files-found: warn
