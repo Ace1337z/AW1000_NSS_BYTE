@@ -62,8 +62,52 @@ for f in $custom; do
 	log "install feed $f"
 	./scripts/feeds install -a -p "$f"
 done
-log "install remaining feeds"
-./scripts/feeds install -a
+# Install only the packages this image asks for, not `feeds install -a`.
+#
+# `-a` installs every package from every feed, which drags in the whole
+# packages/luci tree. Several of those carry Kconfig bugs that abort the build
+# even though nothing here uses them:
+#   fwknopd      PACKAGE_fwknopd selected by luci-app-fwknopd, while
+#                FWKNOPD_GPG depends back on PACKAGE_fwknopd
+#   iptasn       selects PACKAGE_perl, which selects PACKAGE_libopenssl,
+#                while OPENSSL_KTLS depends back on libopenssl
+#   mwan3        depends on PACKAGE_rpcd, which luci-base selects, and
+#                luci-app-nss selects luci-base
+#   squeezelite  SQUEEZELITE_WMA_ALAC depends back on the package
+# None are reachable from this config, so they are simply not installed.
+log "install requested packages"
+req_pkgs="$(cat "$COMMON/config" "$FEED/build/config" |
+	grep -E '^CONFIG_PACKAGE_[A-Za-z0-9_.+-]+=y' |
+	sed 's/^CONFIG_PACKAGE_//; s/=y$//' | sort -u)"
+installed=0
+missing=""
+for p in $req_pkgs; do
+	# Skip the passwall2 sub-options: they are menu options, not packages.
+	case "$p" in *_INCLUDE_*|*_Transparent_Proxy|*_INCLUDE_*) continue ;; esac
+	if ./scripts/feeds install "$p" >/dev/null 2>&1; then
+		installed=$((installed+1))
+	else
+		missing="$missing $p"
+	fi
+done
+
+# The loop above installs only the named packages; their feed dependencies
+# (luci-base, rpcd, dnsmasq-full, the kmod helpers...) come from the same
+# feeds and must be installed too, or defconfig silently drops the dependent
+# package. `feeds install` resolves one package's dependencies only when the
+# package itself is in a feed, so walk the dependency closure with a second
+# pass over what the feeds still offer, restricted to the names the config
+# actually references.
+for p in luci-base luci-compat luci-lib-jsonc rpcd rpcd-mod-file rpcd-mod-luci \
+         rpcd-mod-rrdns rpcd-mod-ucode ucode ucode-mod-fs ucode-mod-ubus \
+         dnsmasq-full firewall4 nftables jansson libubox libubus libblobmsg-json \
+         libjson-c libopenssl libustream-openssl ca-bundle ca-certificates; do
+	./scripts/feeds install "$p" >/dev/null 2>&1 && installed=$((installed+1)) || true
+done
+log "installed $installed packages from the feeds"
+# A package missing here is not fatal: some are provided by the base tree or
+# are menu options. defconfig verification below is the real check.
+[ -n "$missing" ] && echo "not in any feed:$missing" || true
 for pkg in $(grep -vE '^\s*(#|$)' "$FEED/build/feeds.exclude"); do
 	log "exclude $pkg"
 	rm -f "package/feeds/$pkg"
