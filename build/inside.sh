@@ -58,10 +58,11 @@ for pref in $(grep -vE '^\s*(#|$)' "$FEED/build/feeds.prefer"); do
 	log "install ${pref#*/} from ${pref%%/*}"
 	./scripts/feeds install -p "${pref%%/*}" "${pref#*/}"
 done
-for f in $custom; do
-	log "install feed $f"
-	./scripts/feeds install -a -p "$f"
-done
+# The custom feeds are NOT installed with -a: `feeds install -a -p <feed>`
+# installs every package in the feed, and several of them start Kconfig
+# dependency cycles that abort defconfig (see the notes on the install loop
+# below). Their packages are installed by name in the loop further down,
+# driven by build/config.
 # Install only the packages this image asks for, not `feeds install -a`.
 #
 # `-a` installs every package from every feed, which drags in the whole
