@@ -3,17 +3,21 @@
 'require rpc';
 'require ui';
 
-// One page for the three things this image does differently from stock
-// OpenWrt. Two of them interact: the TTL rewrite and the NSS fast path are
-// mutually exclusive, because ECM bypasses netfilter and offloaded flows keep
-// their original TTL. The page makes that relationship visible rather than
-// leaving the user to discover it.
+// The page for the two things this image does differently from stock OpenWrt
+// that have no home of their own: the NSS/ECM fast-path switch, and the
+// AdGuard Home + PassWall2 DNS chain. Both act on subsystems that ship with a
+// LuCI app of their own but neither of which can be switched from one without
+// the other getting in the way.
+//
+// TTL is *not* configured here. It lives in Modem -> QModem -> TTL
+// (/etc/config/qmodem_ttl, owned by luci-app-qmodem-ttlfw4), and this page only
+// reports its state - because it is the reason offload is off by default, and
+// because enabling offload behind its back would silently undo it.
 
-var callStatus = rpc.declare({ object: 'custom', method: 'status', expect: { status: {} } });
-var callTtl    = rpc.declare({ object: 'custom', method: 'ttl_apply', params: [ 'enable', 'ttl4', 'hl6', 'meta_mode' ] });
-var callNss    = rpc.declare({ object: 'custom', method: 'nss_set', params: [ 'state' ] });
-var callAghIn  = rpc.declare({ object: 'custom', method: 'agh_install' });
-var callAghRev = rpc.declare({ object: 'custom', method: 'agh_revert' });
+var callStatus  = rpc.declare({ object: 'custom', method: 'status', expect: { status: {} } });
+var callNss     = rpc.declare({ object: 'custom', method: 'nss_set', params: [ 'state' ] });
+var callAghIn   = rpc.declare({ object: 'custom', method: 'agh_install' });
+var callAghRev  = rpc.declare({ object: 'custom', method: 'agh_revert' });
 
 var CSS = [
 	'.ct-wrap{max-width:940px}',
@@ -28,6 +32,7 @@ var CSS = [
 	'.ct-card>.ct-head{display:flex;align-items:center;gap:10px;padding:12px 16px;',
 	'border-bottom:1px solid rgba(128,128,128,.22);font-weight:600;font-size:1.02em}',
 	'.ct-card>.ct-head .ct-sp{flex:1 1 auto}',
+	'.ct-card>.ct-head a{font-weight:500;font-size:88%;opacity:.9}',
 	'.ct-body{padding:14px 16px}',
 	'.ct-body p.ct-desc{margin:0 0 14px;opacity:.85;line-height:1.5}',
 	'.ct-row{display:flex;align-items:center;gap:12px;padding:7px 0;flex-wrap:wrap}',
@@ -40,10 +45,6 @@ var CSS = [
 	'border-left:3px solid #00b5e2;background:rgba(0,181,226,.10);line-height:1.5}',
 	'.ct-note.warn{border-left-color:#b26a00;background:rgba(178,106,0,.12)}',
 	'.ct-actions{display:flex;gap:9px;flex-wrap:wrap;margin-top:14px}',
-	'.ct-in{width:6.2em;padding:4px 7px;border-radius:5px;border:1px solid rgba(128,128,128,.45);',
-	'background:transparent;color:inherit}',
-	'.ct-sel{padding:4px 7px;border-radius:5px;border:1px solid rgba(128,128,128,.45);',
-	'background:transparent;color:inherit}',
 	'.ct-out{white-space:pre-wrap;max-height:20em;overflow:auto;margin:0;padding:11px 13px;',
 	'border-radius:7px;background:#101418;color:#d6e3ea;font-size:88%;line-height:1.45}',
 	'.ct-out:empty{display:none}'
@@ -90,78 +91,76 @@ return view.extend({
 			});
 		}
 
-		function card(title, badgeNode, bodyNodes) {
+		function card(title, badgeNode, bodyNodes, titleExtra) {
+			var head = [ title ];
+			if (titleExtra)
+				head.push(titleExtra);
+			head.push(E('span', { 'class': 'ct-sp' }), badgeNode);
 			return E('div', { 'class': 'ct-card' }, [
-				E('div', { 'class': 'ct-head' }, [ title, E('span', { 'class': 'ct-sp' }), badgeNode ]),
+				E('div', { 'class': 'ct-head' }, head),
 				E('div', { 'class': 'ct-body' }, bodyNodes)
 			]);
 		}
 
-		/* ---------- 1. TTL ---------- */
-		var ttlOn = s.ttl_enabled == '1';
-		var ttlEnable = E('input', { 'type': 'checkbox', 'checked': ttlOn });
-		var ttl4 = E('input', { 'class': 'ct-in', 'type': 'number', 'value': s.ttl4 || 64,
-			'min': 1, 'max': 255 });
-		var hl6 = E('input', { 'class': 'ct-in', 'type': 'number', 'value': s.hl6 || 64,
-			'min': 1, 'max': 255 });
-		var mode = E('select', { 'class': 'ct-sel' },
-			[ 'wwan_only', 'lan', 'global' ].map(function(m) {
-				return E('option', { 'value': m, 'selected': (s.ttl_mode || 'wwan_only') == m }, [ m ]);
-			}));
+		/* ---------- 1. NSS / ECM flow offload ---------- */
+		var ecmOn  = s.ecm_loaded == '1';
+		var ttlOn  = s.ttl_enabled == '1';
+		var ttlAct = s.ttl_active == '1';
 
-		var ttlCard = card(_('TTL / HopLimit rewrite'), pill(ttlOn, _('ON'), _('OFF')), [
+		var nssStatus;
+		if (!ecmOn)
+			nssStatus = pill(false, _('ON'), _('OFF'));
+		else if (s.ecm_accel == '0')
+			nssStatus = pill(true, _('ACCELERATING'), _('ON'));
+		else
+			/* ECM loaded but not accelerating: loaded, contributing nothing. */
+			nssStatus = E('span', { 'class': 'ct-pill ct-warn' },
+				[ s.ecm_accel ? _('LOADED, IDLE') : _('LOADED') ]);
+
+		var nssCard = card(_('NSS / ECM flow offload'), nssStatus, [
 			E('p', { 'class': 'ct-desc' }, [
-				_('Rewrites TTL (IPv4) and HopLimit (IPv6) on traffic leaving through the modem, so ' +
-				  'the carrier sees a fixed value. In '), E('code', {}, [ 'wwan_only' ]),
-				_(' mode only the modem interfaces are touched - the correct hook. A rule keyed on ' +
-				  'the LAN bridge also rewrites LAN-to-LAN traffic.')
+				_('Forwards established flows through the NSS firmware instead of the Linux ' +
+				  'network stack. It can meaningfully raise routed throughput, and it '),
+				E('b', {}, [ _('cannot coexist with the TTL rewrite:') ]),
+				_(' ECM bypasses netfilter entirely, so offloaded flows keep whatever TTL the ' +
+				  'sender put on the packet. QModem\'s TTL service therefore stops ECM when it ' +
+				  'starts, and this switch refuses to enable it while that service is enabled.')
+			]),
+
+			E('div', { 'class': 'ct-row' }, [
+				E('label', {}, [ _('ECM module') ]),
+				pill(ecmOn, _('loaded'), _('not loaded')),
+				pill(s.ecm_installed == '1', _('installed'), _('not installed'))
 			]),
 			E('div', { 'class': 'ct-row' }, [
-				E('label', {}, [ _('Enabled') ]), ttlEnable,
-				E('span', { 'style': 'opacity:.7;font-size:90%' }, [
-					_('(turn this off before enabling NSS offload)')
-				])
+				E('label', {}, [ _('TTL rewrite') ]),
+				s.ttl_installed == '1'
+					? pill(ttlAct, _('active'), ttlOn ? _('enabled, inactive') : _('off'))
+					: pill(false, _('active'), _('not installed')),
+				E('b', {}, [ String(s.ttl_value || 64) ]),
+				E('a', {
+					'href': L.url('admin/modem/qmodem/ttl'),
+					'style': 'font-size:90%'
+				}, [ _('change in QModem → TTL') ])
 			]),
-			E('div', { 'class': 'ct-row' }, [
-				E('label', {}, [ _('TTL (IPv4)') ]), ttl4,
-				E('label', { 'style': 'min-width:auto' }, [ _('HopLimit (IPv6)') ]), hl6
-			]),
-			E('div', { 'class': 'ct-row' }, [ E('label', {}, [ _('Scope') ]), mode ]),
-			E('div', { 'class': 'ct-actions' }, [
-				E('button', {
-					'class': 'btn cbi-button cbi-button-apply',
-					'click': ui.createHandlerFn(this, function() {
-						return busy(_('Applying TTL settings…'), function() {
-							return callTtl(ttlEnable.checked ? '1' : '0',
-								String(ttl4.value || 64), String(hl6.value || 64), mode.value);
-						});
-					})
-				}, [ _('Apply') ])
-			])
-		]);
 
-		/* ---------- 2. NSS offload ---------- */
-		var ecmOn = s.ecm_loaded == '1';
-		var nssCard = card(_('NSS / ECM flow offload'), pill(ecmOn, _('ON'), _('OFF')), [
-			E('p', { 'class': 'ct-desc' }, [
-				_('Offloads established flows to the NSS firmware. Faster, but '),
-				E('b', {}, [ _('incompatible with the TTL rewrite above:') ]),
-				_(' ECM bypasses netfilter entirely, so offloaded flows keep their original TTL.')
-			]),
-			ttlOn && !ecmOn
+			ttlOn
 				? E('p', { 'class': 'ct-note warn' }, [
-					_('TTL rewriting is currently ON. Turning NSS offload on will let offloaded ' +
-					  'flows escape the rewrite. Turn TTL off first if that matters to you.')
+					_('The TTL rewrite is enabled, so offload is held off. To use offload, disable ' +
+					  'TTL in Modem → QModem → TTL first - the carrier will then see the original ' +
+					  'hop count of each client.')
 				  ])
 				: E('p', { 'class': 'ct-note' }, [
-					_('TTL rewriting is off, so offload can be enabled without conflict.')
+					_('The TTL rewrite is disabled, so offload can be enabled without conflict.')
 				  ]),
+
 			s.nss_available == '1'
 				? E('div', { 'class': 'ct-actions' }, [
 					E('button', {
 						'class': 'btn cbi-button cbi-button-apply',
+						'disabled': ttlOn,
 						'click': ui.createHandlerFn(this, function() {
-							if (!confirm(_('Enable NSS offload? The TTL rewrite will not apply to offloaded flows.')))
+							if (!confirm(_('Enable NSS offload? Routed flows will bypass netfilter.')))
 								return;
 							return busy(_('Enabling NSS offload…'), function() { return callNss('1'); });
 						})
@@ -176,7 +175,7 @@ return view.extend({
 				: E('p', { 'class': 'ct-note warn' }, [ _('qca-nss-ecm is not installed in this image.') ])
 		]);
 
-		/* ---------- 3. AdGuard Home + PassWall2 ---------- */
+		/* ---------- 2. AdGuard Home + PassWall2 ---------- */
 		var aghOn = s.agh_enabled == '1';
 		var aghCard = card(_('AdGuard Home + PassWall2'), pill(aghOn, _('ON'), _('OFF')), [
 			E('p', { 'class': 'ct-desc' }, [
@@ -222,7 +221,7 @@ return view.extend({
 			]),
 			E('p', { 'class': 'ct-desc', 'style': 'margin:14px 0 0' }, [
 				_('After a first install, open '),
-				E('a', { 'href': 'http://' + window.location.hostname + ':3000', 'target': '_blank' },
+				E('a', { 'href': 'http://' + window.location.host + ':3000', 'target': '_blank' },
 					[ window.location.hostname + ':3000' ]),
 				_(' to create the AdGuard Home admin account.')
 			])
@@ -238,7 +237,6 @@ return view.extend({
 					E('small', {}, [ _('Image-specific switches · Arcadyan AW1000 · NSS EDMA') ])
 				])
 			]),
-			ttlCard,
 			nssCard,
 			aghCard,
 			E('div', { 'class': 'ct-card' }, [

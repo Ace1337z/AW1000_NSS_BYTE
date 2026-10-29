@@ -12,14 +12,22 @@
 # Rather than disabling IPv6 outright (which would punish users on carriers
 # that do support it), this only demotes IPv6 when it is measurably broken:
 #
-#   1. Wait for the modem interface (wwan) to settle.
+#   1. Wait for the modem's IPv6 interface to settle.
 #   2. Probe IPv6 with a real connection, not just "is there a route".
 #   3. If it works  -> leave IPv6 preferred (default behaviour).
 #      If it fails  -> prefer IPv4 by installing a low-priority ::/0 route,
 #                      so existing IPv6 config is untouched but IPv4 wins.
+#
+# Interface naming: QModem creates network.<alias> (IPv4) and
+# network.<alias>v6 (IPv6) for every modem it dials, where <alias> comes from
+# /etc/config/qmodem (modem-device '<slot>'.alias, documented default wwan0).
+# This script therefore never hardcodes a name - it reads the alias from UCI
+# and falls back to probing the QMAP channels qmi_wwan_q exposes. Nothing here
+# writes /etc/config/network: QModem owns those sections (see
+# qmodem_interface_owned() in QModem's instance.sh), and a section created by
+# anything else makes QModem refuse to dial through it.
 
 LOG="byte-v6"
-TAG="0x42"
 
 say() { logger -t "$LOG" "$*"; }
 
@@ -40,7 +48,8 @@ has_global_v6() {
 #
 # wget is used because it is in the base image; -6 forces the family.
 v6_works() {
-	for h in "https://[2a00:1450:4001:80e::200e]" https://www.google.com "https://[2606:4700:4700::1111]"; do
+	for h in "https://[2a00:1450:4001:80e::200e]" "https://[2606:4700:4700::1111]" \
+		"https://[2606:4700:4700::1001]"; do
 		wget -6 -q -T 6 -O /dev/null "$h" 2>/dev/null && return 0
 	done
 	return 1
@@ -53,6 +62,25 @@ v6_works() {
 # v6 for its clients either - the outcome is the same and the log says why.
 has_any_global_v6() {
 	ip -6 addr show scope global 2>/dev/null | grep -q 'inet6 2'
+}
+
+# Every netdev QModem may have put a global IPv6 address on. Ordered so the
+# first hit is the one worth reporting.
+candidate_devs() {
+	local alias
+
+	# Preferred: the alias QModem dials through, from its own config.
+	for slot in $(uci -q show qmodem | sed -n "s/^qmodem\.\([^.=]*\)=modem-device$/\1/p"); do
+		alias=$(uci -q get "qmodem.$slot.alias")
+		case "$alias" in
+			''|*[!A-Za-z0-9_]*) continue ;;
+		esac
+		printf '%s\n' "$alias"
+	done
+
+	# Fallback: the raw QMAP channels qmi_wwan_q creates (qmap_mode=2 puts
+	# IPv6 on the _2 channel, single-channel firmware on the bare device).
+	printf '%s\n' wwan0_2 wwan0_1 wwan0
 }
 
 prefer_ipv4() {
@@ -106,11 +134,11 @@ restore_ipv6() {
 		uci commit dhcp
 		/etc/init.d/odhcpd restart 2>/dev/null
 	fi
-	logger -t byte-v6 "IPv6 usable - default preference and LAN RA restored"
-	for d in wwan0_2 wwan0_1 wwan0; do
+	say "IPv6 usable - default preference and LAN RA restored"
+	local d
+	for d in $(candidate_devs); do
 		ip -6 route del default dev "$d" metric 2048 2>/dev/null
 	done
-
 }
 
 main() {
@@ -123,18 +151,29 @@ main() {
 		return 0
 	}
 
-	# Let the modem interface come up (or give up) before judging. This image
-	# has a single "wwan" interface (quectel proto); IPv6, when the carrier
-	# provides it, rides the wwan0_2 QMAP channel.
+	# Let the modem's IPv6 interface come up (or give up) before judging.
+	# The name is QModem's, so resolve it rather than assuming "wanv6".
+	local iface6=""
 	local i=0
+	local slot alias
 	while [ "$i" -lt 20 ]; do
-		# wwan carries IPv4; wwan_6 is the dynamic IPv6 interface
-		# quectel.sh creates for the second QMAP channel. Wait for both,
-		# but do not block forever if the carrier never brings v6 up -
-		# the loop times out and the probe below judges what is there.
-		if ifstatus wwan 2>/dev/null | grep -q '"up": true' &&
-		   { ifstatus wwan_6 2>/dev/null | grep -q '"up": true' ||
-		     [ "$i" -ge 5 ]; }; then
+		if [ -z "$iface6" ]; then
+			for slot in $(uci -q show qmodem | sed -n "s/^qmodem\.\([^.=]*\)=modem-device$/\1/p"); do
+				# `local` does not reset a variable inside a loop, so
+				# assign explicitly: a stale alias from the previous
+				# instance must never leak into this one.
+				alias=$(uci -q get "qmodem.$slot.alias")
+				case "$alias" in
+					''|*[!A-Za-z0-9_]*) continue ;;
+				esac
+				uci -q get "network.${alias}v6" >/dev/null && iface6="${alias}v6"
+			done
+		fi
+		# No IPv6 interface at all after ~15s means the carrier or the PDP
+		# type gave us no v6 bearer; stop waiting and let the probe decide.
+		if [ -n "$iface6" ]; then
+			ifstatus "$iface6" 2>/dev/null | grep -q '"up": true' && break
+		elif [ "$i" -ge 5 ]; then
 			break
 		fi
 		sleep 3
@@ -143,13 +182,14 @@ main() {
 	sleep 3
 
 	local dev=""
-	for d in wwan0_2 wwan0_1 wwan0; do
+	local d
+	for d in $(candidate_devs | uniq); do
 		has_global_v6 "$d" && { dev="$d"; break; }
 	done
 
 	if [ -z "$dev" ]; then
 		say "no global IPv6 on the WAN - preferring IPv4"
-		prefer_ipv4 "${dev:-wwan0_2}"
+		prefer_ipv4 wwan0
 		return 0
 	fi
 

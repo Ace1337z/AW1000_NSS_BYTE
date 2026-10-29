@@ -25,8 +25,8 @@ const FLOOR = -140, SINR_FLOOR = -20;
 //
 // The modem lists only the IPv4 address of a dual-stack (IPV4V6) bearer, so
 // the families are also taken from the addresses netifd has on the modem's
-// interfaces: wwan's own go to its apn, those of a multiplexed IPv6 call
-// (wwan_6) to apnv6.
+// interfaces: the IPv4 one (wwan0) goes to its apn, the separate IPv6
+// interface QModem creates alongside it (wwan0v6) goes to apnv6.
 function apns(lines, wwan) {
 	const seen = {};
 	const add = (apn, fam) => {
@@ -128,9 +128,17 @@ return baseclass.extend({
 		return Promise.all([ read('live'), read('static'), read('history'), network.getNetworks(), history.load() ]);
 	},
 
-	// The modem's interfaces, wwan and the ones its proto adds (wwan_6...).
+	// The modem's interfaces. QModem dials them through proto qmodem_runtime
+	// and names them after the board's slot alias (wwan0, wwan0v6); the old
+	// quectel-cm stack used proto 'quectel' and wwan/wwan_6. Match both the
+	// protos and the name pattern so the card keeps working either way.
 	uplinks(nets) {
-		return nets.filter(net => net.getProtocol() == 'quectel' || /^wwan_/.test(net.getName()));
+		return nets.filter(net => {
+			const proto = net.getProtocol();
+			const name = net.getName();
+			return proto == 'qmodem_runtime' || proto == 'quectel' ||
+				/^wwan\d*/.test(name) || /^wwan_/.test(name);
+		});
 	},
 
 	renderCard(cell, live, wwan) {

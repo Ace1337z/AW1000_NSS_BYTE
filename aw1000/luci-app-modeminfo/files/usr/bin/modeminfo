@@ -5,14 +5,21 @@
 commport=$(uci get modeminfo.settings.comm)
 
 # Modem information from the command to be parsed
-signal=$(sms_tool -d $commport at "at+csq;+qnwinfo;+qcainfo;+qeng=\"servingcell\";+qspn" | tr -d '\r')
+signal=$(sms_tool_q -d $commport at "at+csq;+qnwinfo;+qcainfo;+qeng=\"servingcell\";+qspn" | tr -d '\r')
 
 # Store the output from cat /sys/kernel/debug/usb/devices into a variable
 usbd=$(cat /sys/kernel/debug/usb/devices)
 
-# Check for different drivers and set the PROTO variable accordingly
+# Check for different drivers and set the PROTO variable accordingly.
+# qmi_wwan_q is always dialled by QModem in this image, so name the manager
+# rather than the old quectel-cm binary: the driver tells you the link type,
+# QModem tells you what is actually running on it.
 if echo "$usbd" | grep -q "Driver=qmi_wwan_q"; then
-    protocol="quectel-cm"
+    if [ -x /etc/init.d/qmodem_network ]; then
+        protocol="qmodem (qmi_wwan_q)"
+    else
+        protocol="qmi_wwan_q"
+    fi
 elif echo "$usbd" | grep -q "Driver=qmi_wwan"; then
     protocol="qmi"
 elif echo "$usbd" | grep -q "Driver=cdc_mbim"; then
@@ -27,19 +34,19 @@ fi
 network=$(echo "$signal" | grep 'QENG' | grep -oE 'LTE|NR5G-NSA|NR5G-SA' | tr '\n' ' ')
 
 # Extract modem model and manufacturer using ATI command and ensure no extra newlines
-modem=$(sms_tool -d $commport at "ati" | sed -n '2{h}; 3{H; x; s/\n/ /p}' | tr -d '\r\n')
+modem=$(sms_tool_q -d $commport at "ati" | sed -n '2{h}; 3{H; x; s/\n/ /p}' | tr -d '\r\n')
 
 # Extract revision using AT+QGMR command and remove newlines
-revision=$(sms_tool -d $commport at "at+qgmr" | sed '1d')
+revision=$(sms_tool_q -d $commport at "at+qgmr" | sed '1d')
 
 # Extract ISP from the $signal output (QSPN part)
 isp=$(echo "$signal" | grep 'QSPN:' | awk -F\" '{print $2}' | tr -d '\r' | tr -d '\n')
 
 # Extract temperature using AT+QTEMP (if supported by the modem)
-temperature=$(sms_tool -d $commport at "at+qtemp" | awk -F[,:] '/^\+QTEMP/{print $3}' | sort -r | head -n1 | xargs)
+temperature=$(sms_tool_q -d $commport at "at+qtemp" | awk -F[,:] '/^\+QTEMP/{print $3}' | sort -r | head -n1 | xargs)
 [ -z "$temperature" ] && temperature="N/A"
 
-imei=$(sms_tool -d $commport at "at+cgsn" | sed '1d')
+imei=$(sms_tool_q -d $commport at "at+cgsn" | sed '1d')
 
 # Extract data for CSQ
 csq=$(echo "$signal" | grep 'csq:' | awk -F'[ ,:]' '{print $3}')

@@ -2,7 +2,17 @@
 # <feed>/<package>. Installed before anything else: otherwise the first feed
 # whose package depends on one installs it from the earliest feed in
 # feeds.conf.
-
-# sms_tool 2026-08 (UTF-8 and multipart SMS, USSD fixes) instead of the
-# packages feed's 2025-08; quectel-cm and the modem pages use it.
-luci_smstool/sms-tool
+#
+# Currently EMPTY, and that is deliberate.
+#
+# This used to pin luci_smstool/sms-tool (4IceG's 2026-08 build) so that
+# byte/files/etc/rc.local and luci-app-modeminfo had a /usr/bin/sms_tool to
+# shell out to. QModem now owns the modem stack and ships sms-tool_q as a
+# separate package installing /usr/bin/sms_tool_q, so every caller was moved
+# to that binary and the un-suffixed package is no longer selected
+# (build/config: CONFIG_PACKAGE_sms-tool is not set). Keeping the pin would
+# install a second, unused SMS tool into the image.
+#
+# The luci_smstool feed itself stays in build/feeds - feeds.prefer and
+# feeds.exclude are read independently, and removing the feed would change
+# every feed index for no gain.

@@ -3,13 +3,15 @@
 #
 # Why this exists:
 #   NSS hardware offload forwards established flows entirely in the NSS engine,
-#   which BYPASSES netfilter. The TTL/HopLimit rewrite (luci-app-nft-ttl) is a
-#   netfilter rule, so while offload is active the TTL rewrite does NOT apply to
-#   offloaded (forwarded) traffic. NSS also has no in-hardware TTL support.
+#   which BYPASSES netfilter. The TTL/HopLimit rewrite (QModem's qmodem_ttl,
+#   luci-app-qmodem-ttlfw4) is a netfilter rule, so while offload is active the
+#   TTL rewrite does NOT apply to offloaded (forwarded) traffic. NSS also has no
+#   in-hardware TTL support.
 #
 #   This device needs the TTL rewrite (tethering / carrier detection), so NSS
-#   offload is OFF by default. Turn it on only when you prefer raw speed over a
-#   correct TTL on the wire.
+#   offload is OFF by default - qmodem_ttl stops ECM when it starts. Turn it on
+#   only when you prefer raw speed over a correct TTL on the wire, and disable
+#   qmodem_ttl first; 'on' refuses to run while qmodem_ttl is enabled.
 #
 # Usage:
 #   nss-offload status   show current state
@@ -22,6 +24,14 @@ ACCEL=/sys/kernel/debug/ecm/ecm_classifier_default/accel_mode
 case "$1" in
 on)
 	[ -x "$ECM_INIT" ] || { echo "qca-nss-ecm is not installed"; exit 1; }
+	# qmodem_ttl stops ECM on every start; turning it back on behind the TTL
+	# rewrite's back would leave offloaded flows escaping the rewrite while
+	# the UI still reported TTL as active.
+	if [ "$(uci -q get qmodem_ttl.main.enable)" = "1" ]; then
+		echo "Refusing to enable NSS offload: qmodem_ttl is enabled and needs netfilter." >&2
+		echo "Disable it in Modem -> QModem -> TTL first." >&2
+		exit 1
+	fi
 	"$ECM_INIT" enable
 	"$ECM_INIT" start
 	# 0 = ECM_CLASSIFIER_ACCELERATION_MODE_ACCEL

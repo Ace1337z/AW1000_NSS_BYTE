@@ -5,8 +5,9 @@
 # the old name stops working. Run from /etc/hotplug.d/tty and aw1000-defaults.
 # "aw1000-modem-ports port <interface>" prints the port of one interface.
 #
-#   interface 2 (first AT port):  the LuCI modem pages (luci-app-aw1000-modem,
-#                                 which asks "port 02" on every call)
+#   interface 2 (first AT port):  QModem and fxsd (the RJ11 daemon), both of
+#                                 which probe interface 02 rather than a
+#                                 ttyUSB number
 #   interface 3 (second AT port): front panel LEDs and the dashboard's cache
 
 VIDPID='2c7c:0800'

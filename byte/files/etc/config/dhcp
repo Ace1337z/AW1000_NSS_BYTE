@@ -45,8 +45,9 @@ config dhcp 'lan'
 	list ra_flags 'other-config'
 	option max_preferred_lifetime '2700'
 	option max_valid_lifetime '5400'
-	# The LAN is the master for prefix delegation: it is where wwan_6's
-	# delegated prefix is re-advertised.
+	# The LAN is the master for prefix delegation: it is where the modem's
+	# delegated prefix (network.<alias>v6, created by QModem) is
+	# re-advertised to LAN clients.
 	option master '1'
 
 config odhcpd 'odhcpd'

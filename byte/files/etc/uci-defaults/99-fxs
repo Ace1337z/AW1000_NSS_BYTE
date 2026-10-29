@@ -8,7 +8,7 @@
 #   - the 'at-daemon' ubus object: fxsd sends every AT command through
 #     'ubus call at-daemon sendat', so without ubus-at-daemon running the
 #     phone sits at "Waiting for the modem" even though the modem answers
-#     sms_tool fine.
+#     sms_tool_q fine.
 #
 # The per-boot heavy lifting (PCM check, stale-guard clear, daemon + fxsd
 # start) runs from /etc/rc.local in the background every boot. Here we only

@@ -80,17 +80,20 @@ The initramfs image is for USB boot testing:
 
 ```
 aw1000/       package feed built from this repo
-  aw1000-defaults/          wwan interface, LEDs, first-boot config
-  luci-app-aw1000-modem/    SMS, bands, cell scan/lock, AT console
+  aw1000-defaults/          LEDs, first-boot config (QModem owns the wwan iface)
   luci-app-modeminfo/       serving-cell page
-  luci-app-custom/          the Custom page: TTL, NSS offload, AGH+PassWall2
-  ubus-at-daemon/           AT transport for the phone port (vendored)
-byte/         runtime overlay: TTL, MTU, IPv6, tuning, branding
+  luci-app-custom/          the Custom page: NSS offload, AGH+PassWall2
+byte/         runtime overlay: MTU, IPv6, tuning, branding
 build/        build.sh, inside.sh, config, versions, feeds, patches
-wwan/         qmi_wwan_q, quectel-cm, luci-proto-quectel
+wwan/         qmi_wwan_q (the modem driver this image builds)
 net/          udp-broadcast-relay-redux
 docs/         screenshots and notes
 ```
+
+The modem manager is **QModem**, pulled from its own feed (`build/feeds`,
+pinned in `build/versions`) rather than vendored here: dialling, SMS, bands,
+cell lock, the AT console and the modem UI all come from it, and the RJ11 phone
+stack drives it through QModem's `ubus-at-daemon`.
 
 `build/inside.sh` assembles `.config` from the builder's common config plus
 `build/config`, runs `defconfig`, then **verifies** that every requested `=y`
@@ -101,15 +104,26 @@ an image with a missing feature.
 
 ## Modem
 
-`qmi_wwan_q` (Quectel 1.5.0) with `qmap_mode=2`, driven by `quectel-cm` through
-netifd's `quectel` protocol.
+**QModem** owns the modem: dialling, reconnect, SMS, bands, cell lock, the AT
+console and the modem UI (`Modem → QModem`, the JavaScript UI
+`luci-app-qmodem-next`). The data path underneath it is unchanged: this repo
+builds `qmi_wwan_q` (Quectel 1.5.0) with `qmap_mode=2`, so IPv4 lives on
+`wwan0_1` and IPv6 on `wwan0_2`.
 
-- IPv4 on `wwan0_1`, IPv6 on `wwan0_2`, the IPv6 call coming up as the dynamic
-  `wwan_6`
+- QModem creates and owns the `network.wwan0` / `network.wwan0v6` interfaces
+  (`proto qmodem_runtime`) and adds them to the `wan` zone itself. Nothing in
+  `byte/` or `aw1000/` pre-creates a `wwan` interface - QModem refuses to dial
+  through an interface it does not own, so a stale section would silently stop
+  the uplink rather than be overwritten.
 - `uqmi` and the upstream `qmi_wwan` are deliberately **excluded**: they claim
   the same Quectel USB IDs, and two drivers binding one modem is a coin flip at
   boot. `build/patches-openwrt/0003` removes `uqmi` from the device profile,
   and the build fails if a dependency brings it back.
+- QModem ships its own copy of the same driver under the same binary package
+  name. That copy is excluded (`build/feeds.exclude`) and all three QModem
+  `INCLUDE_*` driver options are off (`build/config`): this repo's
+  `qmi_wwan_q` is the one with the QMAP-netdev and raw-IP work the NSS offload
+  needs (`docs/wwan-nss-offload.md`).
 
 ### AT ports
 
@@ -119,8 +133,14 @@ by USB interface number and vendor ID (`2c7c:0800`):
 
 | Interface | Used by |
 |---|---|
-| 02 | LuCI modem pages, `fxsd`, `ubus-at-daemon` |
+| 02 | QModem, `fxsd` (first AT port) |
 | 03 | front-panel LEDs, dashboard cache |
+
+`fxsd` finds interface 02 itself and passes the path to every
+`ubus call at-daemon sendat`, so QModem's daemon needs no port configuration -
+it opens a port on demand and keeps it open. The `/etc/config/ubus-at-daemon`
+that the package ships is unused by this daemon version, and nothing here
+writes it.
 
 ---
 
@@ -133,7 +153,7 @@ IPv6 (RFC 6724), send everything into a black hole, and the symptom is "the
 internet is fine but nothing loads".
 
 `byte-v6-check` does not guess from routes. It makes real `wget -6`
-connections to three literal targets - two IPv6 literals plus a hostname, so a
+connections to three IPv6 literal targets, so nothing depends on DNS and a
 broken resolver is distinguishable from broken routing. Only if all three fail
 does it demote:
 
@@ -146,29 +166,87 @@ It runs on every `ifup`, and `restore_ipv6` reverses all of it when a later
 connection works. A carrier that fixes its IPv6 gets IPv6 back on the next
 reconnect - nothing is permanent.
 
+### Interface ownership
+
+This is the part that has to differ from the upstream AW1000_BYTE build, and
+the reason a straight copy of its IPv6 files does not work here.
+
+AW1000_BYTE hardcodes a `wan` / `wanv6` pair: its `/etc/config/network`
+declares `network.wan` with `modem_config '4_1'`, and its services wait on
+`wanv6`. Upstream QModem's `03_qmodem` board file instead maps this board's USB
+slot `4-1` to the alias `wwan0`, and `modem_dial.sh` only creates
+`network.<alias>` when `qmodem_interface_owned()` agrees - it passes only when
+`network.$1.modem_config` equals its own instance name, or when the section
+does not exist at all.
+
+So a hardcoded `wan`/`wanv6` would not be "overwritten by QModem". It would
+leave this image with two uplinks - a `wan` interface QModem never dials and a
+`wwan0` interface it does - fighting over the default route.
+
+Every file here therefore resolves the alias from `/etc/config/qmodem` instead
+of assuming a name:
+
+| | |
+|---|---|
+| `byte-v6-check` | reads each `modem-device` section's `alias`, waits for `network.<alias>v6`, probes the alias netdev then the `wwan0_*` QMAP channels |
+| `95-byte-v6` | triggers on `wan*`, `wwan*`, `*qmodem*` and `*v6`, so any alias QModem is configured with re-runs the check |
+| `qmodem-iface-heal` | re-creates `network.<alias>` and `network.<alias>v6` under QModem's own `modem_config` tag and config lock, so QModem keeps ownership and keeps dialling |
+| `byte-mtu`, `byte-selfcheck` | match the same broad interface set |
+
+`byte-v6-check` writes `dhcp` and `gai.conf`, never `/etc/config/network`. The
+NSS feed's `dhcp.lan` block stays `ra 'server'`; QModem only rewrites it to
+`relay` when its `ra_master` option is set, which it is not on this board.
+
 ---
+
+## Modem interface heal
+
+QModem's `hang` → `flush_if` → `flush_ip_cb` path deletes every network
+section tagged with the modem's `modem_config`, including the stop path procd
+takes when `qmodem_network` restarts. If the dial worker never reaches
+`set_if()` - SIM absent, netdev not enumerable, dial respawn throttled - the WAN
+page is left blank until someone re-creates the interface by hand.
+
+`qmodem-iface-heal` (START=95) polls every 2 s for the first two minutes and
+every 20 s afterwards, and re-creates the pair with exactly the schema
+`set_if()` would write. It follows the same ownership rule as QModem: a section
+tagged with a *different* `modem_config` is left untouched rather than stolen,
+and the whole read-modify-commit runs under QModem's own
+`/var/lock/qmodem-config.lock` so it can never interleave with `set_if()`.
+
 
 ## TTL and offload
 
 The TTL rewrite is the point of this image, and it is why NSS/ECM flow offload
 is **off** by default.
 
-`byte-ttl` installs an `inet forward` chain at priority `mangle`, matching the
-**output** interface (`wwan0_1`, `wwan0_2`). That is the correct hook for
-"everything leaving through the modem" - a rule keyed on `iifname br-lan` also
-rewrites LAN-to-LAN traffic and is what `luci-app-nft-ttl` does.
+TTL is owned by **one** package: QModem's `luci-app-qmodem-ttlfw4`. It installs
+`qmodem_ttl`, which writes `/etc/nftables.d/99-reset-ttl-from-br-lan.nft` from
+`/etc/config/qmodem_ttl` and is configured at `Modem → QModem → TTL`. Nothing
+else in the image rewrites TTL:
+
+| Package | What it does | State |
+|---|---|---|
+| `luci-app-qmodem-ttlfw4` | nftables postrouting rule from `/etc/config/qmodem_ttl` | **in the image** |
+| `luci-app-qmodem-ttl` | the iptables flavour; `PKG_CONFLICTS` with the fw4 one, and depends on the legacy UI | excluded (`build/feeds.exclude`) |
+| `luci-app-nft-ttl` (dotycat) | its own `ttl64.nft` on `iifname br-lan` | excluded |
 
 ECM bypasses netfilter entirely, so offloaded flows keep their original TTL and
-defeat the rewrite. The two are mutually exclusive on this box:
+defeat the rewrite. The two are mutually exclusive on this box, and both
+`qmodem_ttl` and `nss-offload` enforce it rather than trusting the user:
 
 ```sh
 nss-offload on     # accelerate, but TTL is no longer guaranteed
 nss-offload off    # TTL correct, modem path runs on the CPU
 ```
 
-Both are switches on the **Services → Custom** page, which persists the choice
-in `/etc/config/byte_ttl` and warns when you would enable offload while the TTL
-rewrite is still on.
+`qmodem_ttl` stops ECM when it starts. `nss-offload on` refuses to run while
+`qmodem_ttl` is enabled, and the **Services → Custom** page shows the TTL state
+read-only, links to the QModem page, and disables its own "Turn ON" button
+while TTL is on.
+
+The first-boot default is TTL 64 with the service enabled
+(`byte/files/etc/uci-defaults/99-byte`).
 
 The image ships with offload off. `kmod-rmnet-nss`, `NSS_DRV_RMNET_ENABLE` and
 `NSS_DRV_C2C_ENABLE` are all present, so `nss-offload on` works - it is a
@@ -180,15 +258,15 @@ choice, not a limitation.
 
 | | |
 |---|---|
-| `byte-ttl` | TTL / HopLimit rewrite on modem egress. Config in `/etc/config/byte_ttl` |
 | `byte-mtu` + hotplug | Clamps `wwan0*` to MTU 1420. 1500 on an LTE/NR bearer is a PMTU blackhole: full-size packets are dropped upstream while small ones pass |
 | `byte-v6` + `byte-v6-check` | IPv6 sanity, as above |
+| `qmodem-iface-heal` | Re-creates `network.<alias>` / `network.<alias>v6` when QModem's flush has removed them and the dial worker has not put them back |
 | `byte-affinity` | Spreads the modem's USB interrupts and RPS across all four cores. They otherwise all land on one core, which saturates long before the link does |
 | `byte-selfcheck` | Verifies governor, `fq`/`bbr`, MTU probing, conntrack and socket buffers at boot and on `ifup`. Logs mismatches, does not fail the boot |
-| `nss-offload` | `on` / `off` / `status` for NSS/ECM |
+| `nss-offload` | `on` / `off` / `status` for NSS/ECM, with the same `qmodem_ttl` guard as the LuCI page |
 | `etc/sysctl.conf` | `fq` + `bbr`, `tcp_fastopen=3`, `tcp_slow_start_after_idle=0`, `netdev_max_backlog=16384`, `netdev_budget=2400`, 4 MB socket buffers, 32768 conntrack entries |
 | `etc/vnstat.conf` | `DatabaseDir "/etc/vnstat"` - the package default is tmpfs, so history would vanish on reboot |
-| `etc/rc.local` | Brings up the phone port (PCM slave check, waits for the `at-daemon` ubus object, starts `fxsd`), spreads the modem IRQs across the cores, and self-heals `tailscale0` when Tailscale is installed. It deliberately does **not** re-assert the TTL rewrite or stop ECM: those are user choices, switched from Services → Custom |
+| `etc/rc.local` | Brings up the phone port (PCM slave check, waits for the `at-daemon` ubus object, starts `fxsd`), spreads the modem IRQs across the cores, and self-heals `tailscale0` when Tailscale is installed. It deliberately does **not** re-assert the TTL rewrite or stop ECM: those are user choices, switched from `Modem → QModem → TTL` |
 | `www/.../footstrap/` | BYTE logo and brand CSS |
 
 `packet_steering` is **off**, matching the NSS feed's own default. Its comment
@@ -212,10 +290,12 @@ the theme, or the dashboard module.
 
 | App | |
 |---|---|
-| `luci-app-aw1000-modem` | SMS conversations, bands, cell scan and lock, AT console |
+| `luci-app-qmodem-next` | the modem UI: dial, SMS, bands, cell lock, AT console |
+| `luci-app-qmodem-sms` | QModem's messaging page |
+| `luci-app-qmodem-ttlfw4` | the TTL rewrite (`Modem → QModem → TTL`) |
 | `luci-app-modeminfo` | serving-cell / SA page |
-| `luci-app-fxs` | RJ11 phone port: dialling, history, caller ID |
-| `luci-app-custom` | the Custom page: TTL rewrite, NSS offload, AdGuard Home + PassWall2 | this repo |
+| `luci-app-fxs` | RJ11 phone port: dialling, history, caller ID, SIP |
+| `luci-app-custom` | the Custom page: NSS offload, AdGuard Home + PassWall2 | this repo |
 | `luci-app-passwall2` | proxy, 26.4.10 |
 | `luci-app-sqm` | Smart Queue Management |
 | `luci-app-netstat` | live per-interface counters, connections |
@@ -223,7 +303,7 @@ the theme, or the dashboard module.
 | `luci-app-ddns` | dynamic DNS |
 | `luci-app-footstrap-files` | file manager for the theme |
 
-Plus `luci-mod-dashboard`, `luci-theme-footstrap` and `luci-proto-quectel`.
+Plus `luci-mod-dashboard` and `luci-theme-footstrap`.
 
 ### Proxy
 
@@ -258,7 +338,7 @@ does:
 | `luci-app-aw1k-led` | its `led-status` writes the same sysfs LEDs as `aw1000-leds` | see `build/config` |
 | `luci-app-nikki` | same TPROXY/nftables hooks as passwall2 - one proxy at a time | `apk add --allow-untrusted luci-app-nikki` |
 | `luci-app-openclash` | same conflict as nikki | `apk add --allow-untrusted luci-app-openclash` |
-| `luci-app-nft-ttl` | own `ttl64.nft` + `br-lan` rule; `byte-ttl` already owns this. Excluded in `feeds.exclude` | drop that line and rebuild |
+| `luci-app-nft-ttl` | own `ttl64.nft` + `br-lan` rule; `luci-app-qmodem-ttlfw4` already owns TTL. Excluded in `feeds.exclude` | drop that line and rebuild, but expect two rulesets rewriting the same packets |
 | `luci-app-wol`, `etherwake` | wake-on-LAN needs a wired LAN peer to wake, and the cellular link is the WAN | `apk add --allow-untrusted luci-app-wol etherwake` |
 | `luci-proto-wireguard`, `wireguard-tools` | a VPN client is a per-user choice, not a default on a cellular router | `apk add --allow-untrusted luci-proto-wireguard wireguard-tools` |
 | `btop` | a second terminal monitor next to `htop`; image space for a duplicate | `apk add --allow-untrusted btop` |
@@ -271,17 +351,20 @@ not pull a dependency tree.
 
 ## RJ11 phone port
 
-Works **without** QModem. The phone stack is `kmod-aw1000-fxs` (SLIC driver),
-`fxsd` (dial tone, ringing, DTMF, caller ID), `luci-app-fxs`, and
-`ubus-at-daemon`.
+The phone stack is `kmod-aw1000-fxs` (SLIC driver), `fxsd` (dial tone,
+ringing, DTMF, caller ID, SIP) and `luci-app-fxs`, pinned to
+[Perz3us/openwrt-aw1000-phone](https://github.com/Perz3us/openwrt-aw1000-phone)
+**v0.5.0** (`build/versions`, `PHONE_SHA`).
 
-The confusion is reasonable: the upstream project says "QModem (fxsd sends AT
-commands through its at-daemon)". But the dependency is on the *daemon*, not on
-QModem the modem manager. `fxsd` sends every AT command through
-`ubus call at-daemon sendat` - its direct tty code is only a liveness probe,
-never a command path. `ubus-at-daemon` is ~100 KB, opens a tty, writes an AT
-command and returns the answer over ubus. It is vendored here from FUjr/QModem
-`052f8447` (MPL-2.0).
+`fxsd` sends every AT command through `ubus call at-daemon sendat` - its direct
+tty code is only a liveness probe, never a command path. `ubus-at-daemon` comes
+from the QModem feed (3.4.x), which is why the two pins move together and why
+`build/feeds.exclude` keeps that package out of nothing and `build/config`
+selects it explicitly.
+
+v0.5.0 adds SIP calling through QModem voice (`qmodem-voip` + `qmodem-sipd`),
+configurable ring patterns, a start guard and caller-ID fixes. SIP is **off**
+by default (`fxs.main.sip=0`) - turn it on in the phone page.
 
 `/etc/rc.local` brings the port up in the background each boot: it clears a
 stale guard, checks `AT+QDAI` and sets the modem's PCM to slave mode if needed,
@@ -291,18 +374,19 @@ waits for the `at-daemon` ubus object, then starts `fxsd`.
 
 ## Services → Custom
 
-One page for the three things this image does differently from stock OpenWrt.
-All three would otherwise need an SSH session.
+One page for the two things this image does differently from stock OpenWrt that
+have no home of their own. Both would otherwise need an SSH session.
 
-**TTL / HopLimit rewrite** — enable it, pick the TTL and HopLimit values and
-the scope (`wwan_only`, `lan` or `global`). Writes `/etc/config/byte_ttl` and
-reloads the ruleset, so the setting survives a reboot. `rc.local` no longer
-forces it on at boot: that would silently undo whatever you choose here.
+TTL is **not** here: it is QModem's own page (`Modem → QModem → TTL`), so there
+is exactly one place that edits `/etc/config/qmodem_ttl`. The Custom page shows
+its state read-only and links to it.
 
 **NSS / ECM flow offload** — turn the fast path on or off. The page says
-plainly why the two are mutually exclusive: ECM bypasses netfilter, so
-offloaded flows keep their original TTL. It warns before you enable offload
-while TTL rewriting is on, and tells you to turn TTL off first if that matters.
+plainly why it and TTL are mutually exclusive: ECM bypasses netfilter, so
+offloaded flows keep their original TTL. While `qmodem_ttl` is enabled the "Turn
+ON" button is disabled and the enable call is refused server-side too, so the
+guard does not depend on the UI. It also reports whether ECM is merely loaded
+or actually accelerating (`accel_mode`).
 
 **AdGuard Home + PassWall2** — a one-click wrapper around
 [Ace1337z/openwrt-agh-passwall2](https://github.com/Ace1337z/openwrt-agh-passwall2):
@@ -363,13 +447,16 @@ flash time.
 
 ## Credits
 
-Modem stack, dashboard widgets and modem pages:
+Modem stack and dashboard widgets:
 [XT-Martinez/aw1000-feed](https://github.com/XT-Martinez/aw1000-feed).
-TTL/MTU/IPv6 runtime: [Ace1337z/AW1000_BYTE](https://github.com/Ace1337z/AW1000_BYTE).
+Modem manager: [FUjr/QModem](https://github.com/FUjr/QModem).
+TTL/MTU/IPv6 runtime and the modem settings: [Ace1337z/AW1000_BYTE](https://github.com/Ace1337z/AW1000_BYTE).
 NSS stack: [JuliusBairaktaris](https://github.com/JuliusBairaktaris).
 Theme: [VizzleTF](https://github.com/VizzleTF/luci-theme-footstrap).
 Phone port: [Perz3us](https://github.com/Perz3us/openwrt-aw1000-phone).
 Netstat page: [Ace1337z](https://github.com/Ace1337z/luci-app-netstat).
 
-Licences are those of the upstream projects; vendored `ubus-at-daemon` is
-MPL-2.0 and the AGH installer is MIT, both noted in their directories.
+Licences are those of the upstream projects; the AGH installer is MIT and is
+noted in its directory. QModem is **MPL-2.0 plus a non-commercial
+restriction** - that is not an OSI licence. It is fine for a personal build of
+this image; re-read it before shipping the image anywhere money changes hands.

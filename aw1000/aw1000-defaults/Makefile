@@ -12,15 +12,15 @@ define Package/aw1000-defaults
   CATEGORY:=Base system
   TITLE:=Arcadyan AW1000 first-boot defaults
   DEPENDS:=@TARGET_qualcommax_ipq807x_DEVICE_arcadyan_aw1000 \
-	+sms-tool +luci-proto-quectel +block-mount
+	+sms-tool_q +block-mount
   PKGARCH:=all
 endef
 
 define Package/aw1000-defaults/description
-  First-boot configuration for the AW1000: the modem's
-  "wwan" interface (quectel proto, IPv4/IPv6 over separate QMAP channels),
-  front panel LEDs, an open 2.4 GHz Wi-Fi network on first boot, the
-  dashboard's modem widgets and the LuCI theme.
+  First-boot configuration for the AW1000: front panel LEDs, an open 2.4 GHz
+  Wi-Fi network on first boot, the dashboard's modem widgets and the LuCI
+  theme. The modem's wwan interface is created by QModem, not here - see the
+  comment in files/etc/uci-defaults/99-zz-aw1000.
 endef
 
 define Package/aw1000-defaults/conffiles

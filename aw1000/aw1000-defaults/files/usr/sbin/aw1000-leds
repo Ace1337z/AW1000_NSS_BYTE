@@ -9,17 +9,15 @@
 #   internet      steady while any of internet_ifaces (fiber wan, modem wwan)
 #                 can ping one of internet_hosts
 #
-#   phone         blinks while the modem holds more messages than were last
-#                 listed on the Modem > Messages page (luci-app-aw1000-modem
-#                 keeps that count in $SMS_SEEN)
-#
-# Also puts the modem's storage for new messages (+CPMS mem3) back to
-# aw1000_modem.sms.storage, ME or SM, when it differs, as after a restart.
+#   phone         blinks while QModem holds unread received messages; steady
+#                 off once they are read on the Modem > QModem > SMS page.
+#                 The count comes from QModem's SMS database (the is_read
+#                 flag), not from an AT poll - QModem owns that storage now.
 #
 # Wi-Fi is a plain trigger (aw1000-defaults). Run by /etc/init.d/aw1000-leds.
 #
-# Polls the modem's second AT port (set in /etc/config/aw1000_leds); the LuCI
-# modem pages use the first. Every poll takes the modem's lock, which all AT
+# Polls the modem's second AT port (set in /etc/config/aw1000_leds); QModem
+# and fxsd use the first. Every poll takes the modem's lock, which all AT
 # users share, and a poll that finds it taken (a cell scan holds it for
 # about 100 s) is skipped. The dashboard's mobile and temperature widgets
 # read what this loop saves in $CACHE instead of asking the modem:
@@ -45,7 +43,6 @@ INET_HOSTS="${INET_HOSTS:-1.1.1.1 8.8.8.8}"
 
 CACHE=/tmp/aw1000-status
 LOCK=/var/lock/aw1000-modem.lock
-SMS_SEEN=/etc/aw1000-modem/sms-seen
 STATIC_EVERY=6
 HISTORY=31
 LIVE_AT='AT+QENG="servingcell";+QCAINFO;+CSQ;+CEREG?;+C5GREG?;+QSPN;+CPMS?;+QTEMP'
@@ -121,40 +118,36 @@ save() {
 		flock -n 9 || exit 0
 		{
 			echo "TIME: $(date +%s)"
-			sms_tool -d "$PORT" at "$2" 2>/dev/null | tr -d '\r'
+			sms_tool_q -d "$PORT" at "$2" 2>/dev/null | tr -d '\r'
 		} >"$CACHE/$1.tmp" && mv "$CACHE/$1.tmp" "$CACHE/$1"
 	) 9>>"$LOCK"
 }
 
-sms_storage() {
-	local want have
+# Unread received messages, from QModem's database. QModem (qmodem-smsd) owns
+# SMS storage now: the old aw1000_modem.sms.storage option and the $SMS_SEEN
+# counter that luci-app-aw1000-modem kept are both gone with those packages, so
+# the phone LED asks QModem instead of counting +CPMS itself.
+#
+# qmodem.sms list honours is_read; ask for received and unread only. A missing
+# daemon or an empty answer leaves the LED alone rather than reporting "no new
+# messages", which would be a lie.
+unread_count() {
+	local n
 
-	want="$(uci -q get aw1000_modem.sms.storage)"
-	case "$want" in ME | SM) ;; *) return ;; esac
-	have="$(tr -d '"' <"$CACHE/live" | awk -F, '/^\+CPMS:/ { print $7; exit }')"
-	[ -n "$have" ] && [ "$have" != "$want" ] || return
-	(
-		flock -n 9 || exit 0
-		sms_tool -d "$PORT" at "AT+CPMS=\"$want\",\"$want\",\"$want\"" >/dev/null 2>&1 &&
-			logger -t aw1000-leds "new SMS go to $want again"
-	) 9>>"$LOCK"
+	command -v ubus >/dev/null 2>&1 || return 1
+	n="$(ubus call qmodem.sms list '{"direction":"received","unread":true}' 2>/dev/null |
+		grep -c '"id"' 2>/dev/null)"
+	[ -n "$n" ] || return 1
+	echo "$n"
 }
 
-# The phone LED: blinking while +CPMS counts more messages, over the memories
-# in use, than $SMS_SEEN. A missing count starts at what is there.
+# The phone LED: blinking while QModem holds unread messages.
 update_phone() {
-	local count seen
+	local n
 
-	count="$(tr -d '"' <"$CACHE/live" | awk -F, '/^\+CPMS:/ {
-		sub(/^\+CPMS: */, "")
-		for (i = 1; i + 1 <= NF; i += 3) if (!($i in used)) { used[$i] = 1; n += $(i + 1) }
-		print n + 0; exit }')"
-	[ -n "$count" ] || return
-	sms_storage
-	[ -f "$SMS_SEEN" ] || { mkdir -p "${SMS_SEEN%/*}"; echo "$count" >"$SMS_SEEN"; }
-	seen="$(cat "$SMS_SEEN")"
+	n="$(unread_count)" || return
 	[ -d "/sys/class/leds/$LED_PHONE" ] || return
-	if [ "$count" -gt "${seen:-0}" ] 2>/dev/null; then
+	if [ "${n:-0}" -gt 0 ] 2>/dev/null; then
 		[ "$(sed -n 's/.*\[\(.*\)\].*/\1/p' "/sys/class/leds/$LED_PHONE/trigger")" = timer ] ||
 			echo timer >"/sys/class/leds/$LED_PHONE/trigger"
 	else

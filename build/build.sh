@@ -67,6 +67,22 @@ fetch openwrt        "$OPENWRT_URL"        "$OPENWRT_SHA"
 fetch nss-packages   "$NSS_PACKAGES_URL"   "$NSS_PACKAGES_SHA"
 fetch builder-reference "$BUILDER_URL"     "$BUILDER_SHA"
 
+# ccache is what keeps a second build of this image under two hours; a cold
+# build of the toolchain plus the NSS stack is closer to four. Create the
+# directory up front so the cache action has something to save on a build that
+# dies before it compiles anything, and apply a size cap: OpenWrt's own default
+# is 5 GB, and GitHub's per-repository cache budget is 10 GB total.
+if command -v ccache >/dev/null 2>&1; then
+	mkdir -p "$WORK/openwrt/.ccache"
+	: "${CCACHE_DIR:=$WORK/openwrt/.ccache}"
+	: "${CCACHE_MAXSIZE:=2G}"
+	: "${CCACHE_COMPRESS:=1}"
+	export CCACHE_DIR CCACHE_MAXSIZE CCACHE_COMPRESS
+	ccache --set-config=max_size="$CCACHE_MAXSIZE" >/dev/null 2>&1 || true
+	ccache --set-config=compression=true       >/dev/null 2>&1 || true
+	log "ccache: $CCACHE_DIR (max $CCACHE_MAXSIZE)"
+fi
+
 # The feed points at this checkout through @WORK@, substituted by inside.sh.
 ln -sfn "$REPO" "$WORK/aw1000-feed"
 

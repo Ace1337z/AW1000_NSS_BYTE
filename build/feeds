@@ -38,10 +38,29 @@ src-git netstat https://github.com/Ace1337z/luci-app-netstat.git^895d2e7b44f3c33
 
 # dotycat: extra AW1000 quality-of-life packages (LED, nssinfo, dstore...).
 # Nothing here is enabled by default, and luci-app-nft-ttl is excluded because
-# it would fight byte-ttl over the same nft rules (see feeds.exclude).
+# it would fight QModem's qmodem_ttl over the same nft rules (see
+# feeds.exclude).
 src-git dotycat https://github.com/dotywrt/dotycat-package.git^fe9f2411189b53c66ddc4f1d91d436bde148923d
 # AW1000 RJ11 phone port, patched with the SLIC driver: kmod-aw1000-fxs +
 # fxsd + luci-app-fxs. This is the phone-port stack (si3226x SLIC, DTMF,
-# ringing, caller ID); ubus-at-daemon, which fxsd drives it through, is
-# vendored in the aw1000 feed.
-src-git fxs https://github.com/Perz3us/openwrt-aw1000-phone.git^901f9dd1fa661fa4858613579fbd83d521565b35
+# ringing, caller ID); ubus-at-daemon, which fxsd drives it through, comes
+# from the qmodem feed below.
+#
+# Pinned to v0.5.0 (tag 5a5c874), the release that adds SIP calling through
+# QModem voice, configurable ring patterns, a hang guard and the caller-ID
+# fixes. fxs.main.sip is 0, so SIP stays off unless it is turned on in LuCI.
+src-git fxs https://github.com/Perz3us/openwrt-aw1000-phone.git^5a5c87471d090f015a0ecaf1f407a8b0082d8e5c
+
+# QModem: the modem manager (dial, SMS, bands, cell lock, AT console, modem
+# rescan) plus ubus-at-daemon, which fxsd sends every AT command through.
+#
+# PINNED TO main AT c50bc9c, NOT A TAG, on purpose. QModem voice (qmodem-voip
+# + qmodem-sipd) is what fxsd 0.5.0 talks to for SIP calling, and it was added
+# in FUjr/QModem#290, which is on main and in no release yet. The newest tag,
+# v3.4.0_rc3, predates it. This pin must move together with the fxs feed above:
+# v0.5.0 needs at-daemon >= 3.4.0 and 3.4.x is what this commit carries.
+#
+# LICENSE NOTE: QModem is MPL-2.0 *plus a non-commercial restriction*. That is
+# not an OSI licence. Fine for a personal build of this image; re-read it before
+# shipping the image anywhere that money changes hands.
+src-git qmodem https://github.com/FUjr/QModem.git^c50bc9cd210c7e9686cd7e0796d57ed6a7977b41

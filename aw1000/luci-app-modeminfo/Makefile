@@ -10,7 +10,7 @@ PKG_LICENSE_FILES:=LICENSE
 
 LUCI_TITLE:=LuCI App for Modem Information
 LUCI_DESCRIPTION:=This LuCI app provides modem information in a web interface.
-LUCI_DEPENDS:=+luci +sms-tool +kmod-usb-serial-option
+LUCI_DEPENDS:=+luci +sms-tool_q +kmod-usb-serial-option
 
 PKG_BUILD_DIR:=$(BUILD_DIR)/$(PKG_NAME)
 

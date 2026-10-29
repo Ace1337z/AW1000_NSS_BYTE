@@ -24,12 +24,12 @@ OPENWRT_SHA="65a94490a509895623aae30faa690347903399f2"
 
 # NSS firmware/driver feed. The aw1000-nss branch is the one XT-Martinez's
 # proven aw1000-feed builds against (same SHA), and it carries the wwan/ tree
-# (quectel-qmi-wwan + rmnet-nss) that kmod-rmnet-nss comes from.
+# that kmod-qca-nss-drv is built from.
 #
 # Note this is NOT JuliusBairaktaris/nss-packages (the tree's own upstream
 # feed): that one has edma-nss for the archived branch and ppe-nss for the new
 # tree, and neither carries a wwan/ directory. The AW1000's modem packages come
-# from this feed plus the vendored copies in wwan/ and aw1000/.
+# from this feed plus the vendored copies in wwan/.
 NSS_PACKAGES_URL="https://github.com/xhikarishii/nss-packages"
 NSS_PACKAGES_SHA="ef05f5c10e6e106fc7ae3d0c67c7fb5c782bc264"
 
@@ -41,3 +41,27 @@ BUILDER_SHA="67279a6f04eb88a63b641f6940487c22b0da9769"
 # Xray-core 26.3.27 (commit d0ebdbb, "xray-core: update to 26.3.27").
 # Paired with luci-app-passwall2 26.4.10 (tag 26.4.10-1) in build/feeds.
 PASSWALL_PKGS_SHA="d0ebdbb35bd463f5d65455e757027e69aea850d7"
+
+# ---------------------------------------------------------------------------
+# Modem manager: QModem, and the phone stack that talks to it.
+#
+# These two move together and are the one exception to "pin the newest tag":
+# the phone daemon needs QModem voice, which lives on QModem main and in no
+# release. Both SHAs are recorded in build/feeds as well (that is what
+# `scripts/feeds update` reads); they are repeated here so the pairing is
+# visible in one place. Change both or neither.
+#
+#   QMODEM_SHA  main @ 2026-10, after FUjr/QModem#290 (AW1000 voice support)
+#   PHONE_SHA   openwrt-aw1000-phone v0.5.0
+#
+# The phone daemon requires at-daemon >= 3.4.0 and QModem reports 3.4.0_rc3,
+# so the pin and the requirement line up.
+QMODEM_SHA="c50bc9cd210c7e9686cd7e0796d57ed6a7977b41"
+PHONE_SHA="5a5c87471d090f015a0ecaf1f407a8b0082d8e5c"
+
+# QMI driver: wwan/qmi_wwan_q (this tree, 1.5.0-r4), NOT QModem's copy.
+# QModem ships driver/quectel_QMI_WWAN under the same binary package name
+# (kmod-qmi_wwan_q), so both in one build is a duplicate-package error. The
+# QModem QMI drivers are excluded in build/feeds.exclude and the QModem
+# INCLUDE_* driver options are off in build/config; this tree's copy is the one
+# with the QMAP-netdev and raw-IP handling that NSS offload needs.

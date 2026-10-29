@@ -7,8 +7,7 @@
 			"path": "custom/overview"
 		},
 		"depends": {
-			"acl": [ "luci-app-custom" ],
-			"uci": { "byte_ttl": true }
+			"acl": [ "luci-app-custom" ]
 		}
 	}
 }

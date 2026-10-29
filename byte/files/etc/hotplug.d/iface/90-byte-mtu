@@ -7,8 +7,11 @@
 # pass, so large transfers and VoIP stall intermittently.
 [ "$ACTION" = "ifup" ] || exit 0
 
+# QModem names the modem interfaces after the alias in /etc/config/qmodem
+# (<alias> and <alias>v6, wwan0/wwan0v6 by default), so match the device
+# prefix as well as the legacy names.
 case "$INTERFACE" in
-	wan|wwan*) ;;
+	wan | wan6 | wan_6 | wanv6 | wwan* | *qmodem*) ;;
 	*) exit 0 ;;
 esac
 

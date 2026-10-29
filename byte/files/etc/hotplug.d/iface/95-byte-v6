@@ -1,8 +1,17 @@
 #!/bin/sh
-# Re-evaluate IPv6 usability when the modem interface comes up, because a
-# reconnect can change whether the carrier gives us a routable IPv6 address.
+# Re-evaluate IPv6 usability when the modem uplink comes up, because a redial
+# can change whether the carrier gives us a routable IPv6 address.
+#
+# QModem names its interfaces after the modem alias in /etc/config/qmodem
+# (<alias> for IPv4, <alias>v6 for IPv6), so match on the device prefix rather
+# than on a fixed "wan"/"wanv6": any wwan* - or the alias QModem is configured
+# with - has to trigger the check.
 [ "$ACTION" = "ifup" ] || exit 0
+
 case "$INTERFACE" in
-	wan|wwan) [ -x /usr/libexec/byte-v6-check ] && ( /usr/libexec/byte-v6-check ) & ;;
+	wan | wan6 | wan_6 | wanv6 | wwan* | *qmodem* | *[!_0-9]v6) ;;
+	*) exit 0 ;;
 esac
+
+[ -x /usr/libexec/byte-v6-check ] && ( /usr/libexec/byte-v6-check ) &
 exit 0

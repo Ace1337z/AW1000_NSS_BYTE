@@ -270,10 +270,25 @@ fi
 [[ "$STEP" = prepare ]] && { log "prepared (make not run)"; exit 0; }
 
 log "download"
-make download -j8
+# Parallel downloads only. `make download` does not respect -j the way the
+# build does, and on a cold cache a single slow mirror used to hold the whole
+# step; the retry covers the transient 5xx the OpenWrt mirrors return under
+# load. Sources that are already in dl/ are not re-fetched.
+for attempt in 1 2 3; do
+	make download -j8 && break
+	echo "download attempt $attempt failed, retrying" >&2
+	sleep 15
+done
 
 log "build"
-make -j"$(nproc)" || make -j1 V=s
+# A failed parallel build is retried serially, because the usual cause is one
+# package racing a dependency, and -j1 makes the real error the last thing in
+# the log instead of one line among 200 interleaved ones. It is NOT a fix for
+# a genuine compile error: that fails the same way at -j1 and the build stops.
+if ! make -j"$(nproc)"; then
+	echo "parallel build failed; retrying serially to get a readable error" >&2
+	make -j1 V=s
+fi
 
 log "images"
 ls -l bin/targets/qualcommax/ipq807x/*aw1000* 2>/dev/null || true

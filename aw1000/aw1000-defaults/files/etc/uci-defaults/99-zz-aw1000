@@ -12,46 +12,46 @@
 
 . /lib/functions.sh
 
-# Modem data path: quectel-cm through netifd.
+# Modem data path: entirely QModem's.
 #
-# Dual-stack by default. pdptype=ipv4v6 with multiplexing=1 puts IPv4 on
-# wwan0_1 and IPv6 on wwan0_2 (qmi_wwan_q is built with qmap_mode=2 for exactly
-# this), and the IPv6 call comes up as the dynamic interface wwan_6, which the
-# firewall zone below picks up by name.
+# There is deliberately NO network.wwan (or wwan_6) interface created here.
+# QModem owns the network.<alias> sections it dials through:
+#
+#   - /etc/board.d/03_qmodem maps the AW1000's USB modem (slot 4-1) to the
+#     alias wwan0, so modem_dial.sh creates network.wwan0 with
+#     proto='qmodem_runtime' and modem_config=<the qmodem section name>.
+#   - modem_dial.sh refuses to touch an interface it does not own:
+#     qmodem_interface_owned() passes only when network.$1.modem_config equals
+#     its own instance name, or when network.$1 does not exist at all. A
+#     pre-created network.wwan with some other proto therefore does not merely
+#     get overwritten - it makes QModem skip the interface and never dial.
+#   - proto 'qmodem_runtime' (/lib/netifd/proto/qmodem_runtime.sh) is the only
+#     handler for these interfaces, and it exists only in QModem. The old
+#     proto='quectel' from luci-proto-quectel is gone: that package and its
+#     quectel-cm dialer are not in the image any more (build/config).
+#
+# qmi_wwan_q is still built here and still puts IPv4/IPv6 on wwan0_1/wwan0_2
+# (qmap_mode=2, see build/config); QModem is what dials and hands the result to
+# netifd, and it adds the interface to the wan zone itself (append_to_fw_zone).
+# Setting the APN and PDP type is QModem -> Network Configuration, not UCI here.
 #
 # IPv6 being *available* is not the same as IPv6 *working*: plenty of carriers
 # hand out a prefix and never route it, and then every client prefers IPv6
 # (RFC 6724) and sends traffic into a black hole - "the internet is fine but
 # nothing loads". byte-v6-check measures real connectivity and only demotes to
-# IPv4 when it actually fails, so enabling IPv6 here is safe.
-#
-# apnv6 is left unset on purpose: it falls back to apn, which is what a single
-# APN with dual-stack PDP does on every carrier seen so far. Set it only if the
-# carrier wants a separate IPv6 APN.
-if ! uci -q get network.wwan >/dev/null; then
-	uci set network.wwan='interface'
-	uci set network.wwan.proto='quectel'
-	uci set network.wwan.device='/dev/cdc-wdm0'
-	uci set network.wwan.apn='internet'
-	uci set network.wwan.pdptype='ipv4v6'
-	uci set network.wwan.multiplexing='1'
-	uci set network.wwan.auth='none'
-	uci set network.wwan.metric='10'
-	# Let netifd's DHCPv6 client on wwan_6 request a prefix the LAN can use.
-	uci set network.wwan.delegate='1'
-fi
+# IPv4 when it actually fails, so leaving IPv6 on in QModem is safe.
 
-# The modem interfaces go in the wan zone. wwan_6 is the dynamic IPv6
-# interface quectel.sh creates when pdptype is ipv4v6 with multiplexing, so it
-# has to be listed too - otherwise IPv6 is up but firewalled off from the LAN
-# (no forward, no masq for v6) and only IPv4 appears to work.
-wan_zone="$(uci show firewall | sed -n "s/^firewall\.\(@zone\[[0-9]*\]\)\.name='wan'$/\1/p" | head -n1)"
-if [ -n "$wan_zone" ]; then
-	for net in wwan wwan_6; do
-		uci -q del_list "firewall.$wan_zone.network=$net"
-		uci add_list "firewall.$wan_zone.network=$net"
-	done
-fi
+# The modem interfaces go in the wan zone, and QModem does that itself when it
+# creates them (qmodem_wan_zone + append_to_fw_zone). Nothing to do here - but
+# if an interface created by an older image survived a settings-keeping
+# upgrade, drop it so QModem is free to own the name again. Only an interface
+# without a modem_config is touched; one QModem created is left alone.
+for net in wwan wwan_6; do
+	if uci -q get "network.$net" >/dev/null && \
+	   [ -z "$(uci -q get "network.$net.modem_config")" ]; then
+		uci -q delete "network.$net"
+	fi
+done
 
 # LEDs: signal, 5G, internet and phone belong to aw1000-leds, Wi-Fi to a
 # trigger.

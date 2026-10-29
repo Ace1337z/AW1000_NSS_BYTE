@@ -10,6 +10,6 @@
  ──────────────────────────────────────────────────────────────────
     Arcadyan AW1000  ·  IPQ8072A  ·  OpenWrt  ·  apk
 
-   Modem    qmi_wwan_q + quectel-cm      TTL      byte-ttl (on)
+   Modem    QModem (ubus-at-daemon)       TTL      QModem TTL (on)
    Offload  NSS/ECM (off by default)     Phone    fxsd (RJ11)
    LuCI     Footstrap + dashboard        Config   Services → Custom

@@ -6,28 +6,67 @@
 # packages feed's sms-tool-js page. Only sms-tool itself is wanted.
 luci_smstool/luci-app-sms-tool-js
 
-# dotycat's luci-app-nft-ttl writes its own /etc/nftables.d/ttl64.nft and a
-# postrouting rule keyed on iifname br-lan. byte-ttl already owns the modem
-# egress rewrite (and does it on the output interface, which is the correct
-# hook for "everything leaving through the modem"); installing both means two
-# rules rewriting the same packets, and the LuCI page would silently disagree
-# with the running config.
+# TTL is owned by exactly one package: luci-app-qmodem-ttlfw4 (see
+# build/config). Every one of these writes its *own* nftables/iptables rules
+# for TTL, so any two of them together means two rulesets rewriting the same
+# packets and a LuCI page that disagrees with what is actually running.
 #
-# Note: this package is from dotycat, not from XT-Martinez - XT's aw1000-feed
-# ships no TTL handling at all. It is excluded because byte-ttl is the
-# superset (TTL, HopLimit, per-family, wwan-only or global), not because of
-# where it comes from. To use the LuCI page instead, drop this line, remove
-# byte-ttl from the overlay, and set nftttl.ttl.enabled=1.
+#   dotycat/luci-app-nft-ttl   /etc/nftables.d/ttl64.nft, postrouting on
+#                              iifname br-lan
+#   qmodem/luci-app-qmodem-ttl the iptables flavour of QModem's own page; it
+#                              declares PKG_CONFLICTS with the fw4 one
+#   qmodem/luci-app-qmodem-ttlfw4 is the one that stays
 dotycat/luci-app-nft-ttl
+qmodem/luci-app-qmodem-ttl
 
 # The nss feed's wwan/app/ tree ships its own modem managers and LuCI pages:
 #   luci-app-usbmodem   depends on kmod-qmi_wwan_q, which quectel-cm selects,
 #                       which makes Kconfig report a recursive dependency
 #   luci-app-pcimodem   the PCIe-MHI sibling, same stack
-#   luci-proto-quectel  this repo builds its own (wwan/luci-proto-quectel)
-# None of them are wanted: the modem UI here is luci-app-aw1000-modem, and the
-# protocol form comes from wwan/. Excluding the directories keeps `feeds
-# install -a` from pulling them in.
+#   luci-proto-quectel  a quectel-cm-backed protocol; QModem dials through
+#                       proto qmodem_runtime now, and the quectel-cm /
+#                       luci-proto-quectel packages this repo used to carry
+#                       have been removed with the rest of the old modem stack
+# None of them are wanted: the modem UI here is QModem. Excluding the
+# directories keeps `feeds install -a` from pulling them in.
 nss/luci-app-usbmodem
 nss/luci-app-pcimodem
 nss/luci-proto-quectel
+
+# QModem ships two mutually exclusive main UIs: the legacy luasrc one
+# (luci-app-qmodem) and the JavaScript rewrite (luci-app-qmodem-next). Only
+# -next is installed - see build/config. The legacy directory is excluded so a
+# dependency cannot drag it back in, which would give two menu trees writing
+# the same /etc/config/qmodem.
+#
+# The MHI/PCIe drivers go with it: this board has a single USB modem at 4-1
+# and no PCIe modem, so none of them is built. (scripts/feeds links each
+# package under its own basename, so these are directory names, not paths -
+# quectel_MHI_nss lives at driver/nss/ in the feed but links as
+# package/feeds/qmodem/quectel_MHI_nss.)
+qmodem/luci-app-qmodem
+qmodem/quectel_MHI
+qmodem/quectel_MHI_nss
+qmodem/fibocom_QMI_WWAN
+qmodem/simcom_QMI_WWAN
+
+# Every QModem QMI driver is excluded, because this tree builds the only one
+# this image may contain:
+#
+#   qmodem/quectel_QMI_WWAN      QModem's own qmi_wwan_q (1.5-r2). Same binary
+#                                package name as wwan/qmi_wwan_q (1.5.0-r4), so
+#                                building both is a duplicate-package error -
+#                                and this tree's copy is the one carrying the
+#                                QMAP netdev and raw-IP fixes that NSS offload
+#                                depends on (docs/wwan-nss-offload.md).
+#   qmodem/quectel_QMI_WWAN_nss  the same driver built against rmnet-nss, a
+#                                different acceleration design from this tree's
+#                                PPE glue; rmnet-nss itself is in the nss feed.
+#   qmodem/rmnet-nss             upstream copy of the module the nss feed builds.
+#
+# QModem reaches the driver through CONFIG_PACKAGE_kmod-qmi_wwan_q=y instead;
+# its DEPENDS are conditional (PACKAGE_qmodem_INCLUDE_*:kmod-...), so it never
+# requires a driver of its own and these exclusions cost nothing at runtime.
+qmodem/quectel_QMI_WWAN
+qmodem/quectel_QMI_WWAN_nss
+qmodem/rmnet-nss

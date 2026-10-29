@@ -1,0 +1,166 @@
+#!/bin/sh
+# Ensure the modem's uplink interfaces always exist in /etc/config/network.
+#
+# QModem's hang() -> flush_if() -> flush_ip_cb() deletes every network section
+# whose modem_config matches the modem being flushed (see QModem's
+# modem_dial.sh). It does that on any stop/redial/hang, including the
+# stop_service path procd takes when the qmodem_network service is restarted.
+# If the dial worker then never reaches set_if() - the modem is unplugged, the
+# SIM is missing, or the dial process is respawn-throttled - the sections stay
+# missing and LuCI shows a WAN interface with no preset that has to be
+# recreated by hand.
+#
+# This re-creates the two sections with exactly the schema QModem's set_if()
+# would create, using the alias QModem is configured with, so the WAN page
+# always has a normal editable DHCP interface.
+#
+# Ownership rules this file deliberately follows, because getting them wrong
+# is what makes QModem stop dialling:
+#
+#   - QModem's qmodem_interface_owned() accepts a section only when its
+#     modem_config equals the instance name, or when the section does not
+#     exist at all. Every section written here carries modem_config, so QModem
+#     still sees them as its own and rewrites them freely on the next dial.
+#   - The alias is read from /etc/config/qmodem, never assumed to be "wan".
+#     Upstream QModem's board.d maps this board to alias wwan0 and creates
+#     network.wwan0 / network.wwan0v6, so a hardcoded "wan"/"wanv6" pair (what
+#     this image used to do) would create a second, unrelated interface that
+#     QModem never touches - two uplinks fighting over the default route.
+#   - The QModem config lock is taken for the whole read-modify-commit, so we
+#     can never interleave with set_if() and leave a half-written section.
+#
+# To opt out (e.g. you want a different uplink interface layout), either set
+#   uci set qmodem.<instance>.state=disabled
+# or replace the interface with your own section that does NOT carry
+# modem_config '<instance>' - both stop this script without fighting it.
+
+MODEM_CFG="${1:-4_1}"
+METRIC="11"
+
+[ -f /etc/config/network ] || exit 0
+
+# Only act when this modem instance is configured on the box.
+[ "$(uci -q get "qmodem.$MODEM_CFG")" = "modem-device" ] || exit 0
+[ "$(uci -q get "qmodem.$MODEM_CFG.state")" = "disabled" ] && exit 0
+
+# The alias QModem dials through. "-" and unset both mean "use the instance
+# name", exactly as modem_dial.sh does.
+IFACE=$(uci -q get "qmodem.$MODEM_CFG.alias")
+case "$IFACE" in
+	''|'-'|*[!A-Za-z0-9_]*) IFACE="$MODEM_CFG" ;;
+esac
+IFACE6="${IFACE}v6"
+
+# Follow the metric QModem itself would use, instead of hardcoding 11.
+m=$(uci -q get "qmodem.$MODEM_CFG.metric")
+case "$m" in ''|*[!0-9]*) ;; *) METRIC="$m" ;; esac
+
+# Nothing to do in the common case, and this keeps the timer cheap.
+uci -q get "network.$IFACE" >/dev/null 2>&1 &&
+	uci -q get "network.$IFACE6" >/dev/null 2>&1 && exit 0
+
+mkdir -p /var/lock
+exec 8>/var/lock/qmodem-config.lock
+flock -x 8 || exit 0
+
+# Re-check under the lock: QModem may have recreated them while we waited.
+if uci -q get "network.$IFACE" >/dev/null 2>&1 &&
+	uci -q get "network.$IFACE6" >/dev/null 2>&1; then
+	exit 0
+fi
+
+# A section that exists but belongs to someone else is left completely alone
+# rather than stolen - same rule as QModem's qmodem_interface_owned(). This is
+# checked for both names *before* anything is written, so a half-owned pair
+# cannot end up with one section rewritten and the other abandoned.
+for s in "$IFACE" "$IFACE6"; do
+	owner=$(uci -q get "network.$s.modem_config")
+	if [ -n "$owner" ] && [ "$owner" != "$MODEM_CFG" ]; then
+		exit 0
+	fi
+done
+
+# Which of the two are actually missing? The ownership check above has already
+# ruled out taking over a foreign section, so a section that exists here is
+# either ours or an untagged section we created and then lost the tag on.
+need4=0
+need6=0
+uci -q get "network.$IFACE" >/dev/null 2>&1 || need4=1
+uci -q get "network.$IFACE6" >/dev/null 2>&1 || need6=1
+
+[ "$need4" = 1 ] || [ "$need6" = 1 ] || exit 0
+
+changed=0
+
+# Resolve the real data interface the same way QModem's set_if() does: walk
+# the modem path for its net directory and take the first netdev.
+NETDEV=""
+MPATH=$(uci -q get "qmodem.$MODEM_CFG.path" 2>/dev/null)
+if [ -n "$MPATH" ]; then
+	MPATH=$(readlink -f "$MPATH" 2>/dev/null)
+	if [ -n "$MPATH" ] && [ -d "$MPATH" ]; then
+		NETDIR=$(find "$MPATH" -name net 2>/dev/null | tail -1)
+		if [ -n "$NETDIR" ]; then
+			NETDEV=$(ls "$NETDIR" 2>/dev/null | head -1)
+		fi
+	fi
+fi
+# Only accept a sane interface name.
+case "$NETDEV" in
+	''|*[!A-Za-z0-9_.:-]*) NETDEV="wwan0_1" ;;
+esac
+
+# ---- IPv4 uplink ----------------------------------------------------------
+if [ "$need4" = 1 ]; then
+	uci set "network.$IFACE=interface"
+	uci set "network.$IFACE.proto=dhcp"
+	uci set "network.$IFACE.device=$NETDEV"
+	uci set "network.$IFACE.ifname=$NETDEV"
+	uci set "network.$IFACE.modem_config=$MODEM_CFG"
+	uci set "network.$IFACE.defaultroute=1"
+	uci set "network.$IFACE.metric=$METRIC"
+	changed=1
+	logger -t qmodem-heal "recreated network.$IFACE on $NETDEV"
+fi
+
+# ---- IPv6 uplink (piggybacks on $IFACE) -----------------------------------
+# QModem only creates this one when the PDP type carries IPv6 and it reaches
+# set_if(); extendprefix=1 matches the QModem instance's extend_prefix option.
+if [ "$need6" = 1 ]; then
+	uci set "network.$IFACE6=interface"
+	uci set "network.$IFACE6.modem_config=$MODEM_CFG"
+	uci set "network.$IFACE6.proto=dhcpv6"
+	uci set "network.$IFACE6.ifname=@$IFACE"
+	uci set "network.$IFACE6.device=@$IFACE"
+	uci set "network.$IFACE6.metric=$METRIC"
+	if [ "$(uci -q get "qmodem.$MODEM_CFG.extend_prefix")" = "1" ]; then
+		uci set "network.$IFACE6.extendprefix=1"
+	fi
+	changed=1
+	logger -t qmodem-heal "recreated network.$IFACE6"
+fi
+
+if [ "$changed" = "1" ]; then
+	uci commit network
+	# Keep the firewall wan zone pointing at the interfaces. There must be
+	# exactly one zone named wan - QModem's own append_to_fw_zone() bails out
+	# when there is not, so if this is ambiguous we leave it alone.
+	zones=$(uci -q show firewall | sed -n "s/^firewall\.\(.*\)\.name='wan'$/\1/p")
+	set -- $zones
+	if [ "$#" = "1" ]; then
+		for n in "$IFACE" "$IFACE6"; do
+			case " $(uci -q get "firewall.$1.network") " in
+				*" $n "*) ;;
+				*) uci add_list "firewall.$1.network=$n"; fw=1 ;;
+			esac
+		done
+		[ "${fw:-0}" = 1 ] && uci commit firewall
+	fi
+	# Release the QModem lock before reloading netifd: the reload can take a
+	# while and must not block QModem's own dial-time config writes.
+	flock -u 8 2>/dev/null; exec 8>&-
+	/etc/init.d/network reload >/dev/null 2>&1
+	logger -t qmodem-heal "uplink interfaces restored"
+fi
+
+exit 0

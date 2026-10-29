@@ -23,6 +23,19 @@ jobs:
 
     env:
       CI: "1"
+      # OpenWrt's CONFIG_CCACHE points ccache here (build.sh moves this
+      # directory aside across a re-clone). An explicit path keeps it inside
+      # the workspace so actions/cache can find it.
+      CCACHE_DIR: ${{ github.workspace }}/work/openwrt/.ccache
+      # 2 GB holds the whole toolchain plus most of the target tree. OpenWrt
+      # alone produces ~1.5 GB of objects; a smaller cap silently evicts the
+      # toolchain between runs and every build starts cold.
+      CCACHE_MAXSIZE: 2G
+      CCACHE_COMPRESS: "1"
+      # Relative paths keep the object cache valid across runners, which all
+      # check out under /home/runner/work/<repo>/<repo>.
+      CCACHE_BASEDIR: ${{ github.workspace }}
+      CCACHE_NOHASHDIR: "1"
 
     steps:
       - name: Checkout
@@ -47,21 +60,71 @@ jobs:
             python3-pip python3-ply python3-docutils python3-pyelftools qemu-utils re2c rsync scons \
             squashfs-tools subversion swig texinfo uglifyjs upx-ucl unzip vim wget xmlto xxd zlib1g-dev
 
-      - name: Cache downloads and ccache
-        uses: actions/cache@v4
+      # Restore-only: the caches are uploaded by the explicit save steps at the
+      # end of the job, which run even when the build fails. actions/cache's own
+      # post-step only saves on success, so a build that failed at minute 200
+      # threw away every object file it had compiled.
+      #
+      # The keys are stable (a hash of the pinned trees), not per-run. A new
+      # key on every run makes the cache immutable-and-unreused: every run
+      # compiles from scratch, then adds another ~2 GB to the repository's
+      # 10 GB cache budget until GitHub starts evicting.
+      - name: Restore ccache
+        uses: actions/cache/restore@v4
         with:
-          path: |
-            work/openwrt/dl
-            work/openwrt/.ccache
-          key: aw1000-nss-byte-${{ github.run_id }}
+          path: work/openwrt/.ccache
+          key: aw1000-nss-byte-ccache-${{ hashFiles('build/versions', 'build/feeds', 'build/config') }}
           restore-keys: |
-            aw1000-nss-byte-
+            aw1000-nss-byte-ccache-
+
+      # dl/ is just the upstream tarballs. It does not depend on this repo, only
+      # on the pinned tree, so it gets its own key and is never invalidated by a
+      # config edit.
+      - name: Restore source archives
+        uses: actions/cache/restore@v4
+        with:
+          path: work/openwrt/dl
+          key: aw1000-nss-byte-dl-${{ hashFiles('build/versions', 'build/feeds') }}
+          restore-keys: |
+            aw1000-nss-byte-dl-
 
       - name: Fetch pinned trees and build
         run: |
           chmod +x build/build.sh build/inside.sh
           ./build/build.sh all 2>&1 | tee build.log
           exit ${PIPESTATUS[0]}
+
+      # Whether the ccache is actually being reused is the difference between a
+      # 90 minute build and a 4 hour one, and it is otherwise invisible: the
+      # make output looks identical either way. Print the hit rate, and make a
+      # cache that was restored but never hit fail loudly instead of silently
+      # costing three extra hours.
+      - name: Report ccache statistics
+        if: always()
+        run: |
+          {
+            echo "### ccache";
+            echo '```';
+            ccache --show-stats 2>/dev/null || echo "ccache not used by this build";
+            echo '```';
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # Save on failure as well. The step after this one compiles the NSS driver
+      # and the kernel, which is where most of the four hours goes; losing the
+      # ccache at that point is what turned one failed run into four.
+      - name: Save ccache
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: work/openwrt/.ccache
+          key: aw1000-nss-byte-ccache-${{ hashFiles('build/versions', 'build/feeds', 'build/config') }}
+
+      - name: Save source archives
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: work/openwrt/dl
+          key: aw1000-nss-byte-dl-${{ hashFiles('build/versions', 'build/feeds') }}
 
       # Artifacts and the job log both need API auth to read, which makes a
       # failed run impossible to diagnose from outside the web UI. On failure

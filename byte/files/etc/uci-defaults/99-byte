@@ -16,11 +16,26 @@
 log() { logger -t byte-defaults "$*"; }
 
 # ---- TTL / HopLimit rewrite on the modem uplink -----------------------------
-# The point of this image. Enabled even when /etc/config survived an upgrade.
-if [ -x /etc/init.d/byte-ttl ]; then
-	/etc/init.d/byte-ttl enable 2>/dev/null
-	/etc/init.d/byte-ttl start 2>/dev/null
-	log "byte-ttl enabled"
+# The point of this image, and enabled here even when /etc/config survived an
+# upgrade.
+#
+# The service is QModem's own qmodem_ttl (luci-app-qmodem-ttlfw4), not the
+# in-tree byte-ttl this image used to ship. Its init script writes
+# /etc/nftables.d/99-reset-ttl-from-br-lan.nft from /etc/config/qmodem_ttl and
+# stops ECM, so there is exactly one ruleset owning the rewrite. Configuration
+# lives at Modem -> QModem -> TTL; this only supplies the first-boot default
+# (on, TTL 64 on both families) and never overwrites a value already set.
+if [ -x /etc/init.d/qmodem_ttl ]; then
+	uci -q get qmodem_ttl.main >/dev/null 2>&1 || uci -q set qmodem_ttl.main=main
+	[ -n "$(uci -q get qmodem_ttl.main.enable)" ] || \
+		uci -q set qmodem_ttl.main.enable='1'
+	[ -n "$(uci -q get qmodem_ttl.main.ttl)" ] || \
+		uci -q set qmodem_ttl.main.ttl='64'
+	uci -q commit qmodem_ttl
+
+	/etc/init.d/qmodem_ttl enable 2>/dev/null
+	/etc/init.d/qmodem_ttl restart 2>/dev/null
+	log "qmodem_ttl enabled (TTL $(uci -q get qmodem_ttl.main.ttl))"
 fi
 
 # ---- MTU clamp -------------------------------------------------------------
@@ -33,10 +48,29 @@ if [ -x /etc/init.d/byte-mtu ]; then
 	log "byte-mtu enabled"
 fi
 
+# ---- Modem uplink interface heal -------------------------------------------
+# QModem's hang/redial path deletes network.<alias> and network.<alias>v6, and
+# only puts them back if the dial worker gets that far. Without this the WAN
+# page goes blank until someone re-creates the interface by hand. The helper
+# re-creates exactly the two sections QModem would, carrying modem_config, so
+# QModem still considers them its own and keeps dialling through them.
+if [ -x /etc/init.d/qmodem-iface-heal ]; then
+	/etc/init.d/qmodem-iface-heal enable 2>/dev/null
+	/etc/init.d/qmodem-iface-heal start 2>/dev/null
+	log "qmodem-iface-heal enabled"
+fi
+
 # ---- IPv6 sanity -----------------------------------------------------------
 # IPv6 stays enabled; this only demotes it to IPv4 when the carrier delegates
 # a prefix but provides no routable WAN address, which would otherwise make
 # clients prefer a dead path.
+#
+# Ownership note: this never writes /etc/config/network. QModem owns
+# network.<alias> / network.<alias>v6 and refuses to dial through a section
+# that is tagged with a different modem_config, so a hardcoded "wan"/"wanv6"
+# pair here (what this image used to ship, copied from a build where the alias
+# *was* wan) would leave this image with two uplinks and QModem dialling none
+# of them. byte-v6-check reads the alias from /etc/config/qmodem instead.
 if [ -x /etc/init.d/byte-v6 ]; then
 	/etc/init.d/byte-v6 enable 2>/dev/null
 	log "byte-v6 enabled"
@@ -77,8 +111,11 @@ log "packet_steering left off (NSS default; see 99-byte to enable)"
 
 # ---- NSS/ECM flow offload --------------------------------------------------
 # ECM bypasses netfilter entirely, so offloaded flows keep their original TTL
-# and defeat the rewrite above. Keep it installed - /usr/bin/nss-offload can
-# turn it on - but off by default: TTL correctness beats offload throughput.
+# and defeat the rewrite above. QModem's qmodem_ttl service already stops it
+# when it starts; doing it here as well keeps the two from racing on first boot
+# and gives a deterministic state before anything is dialled. Keep it installed
+# - /usr/bin/nss-offload can turn it on - but off by default: TTL correctness
+# beats offload throughput.
 if [ -x /etc/init.d/qca-nss-ecm ]; then
 	/etc/init.d/qca-nss-ecm stop 2>/dev/null
 	/etc/init.d/qca-nss-ecm disable 2>/dev/null

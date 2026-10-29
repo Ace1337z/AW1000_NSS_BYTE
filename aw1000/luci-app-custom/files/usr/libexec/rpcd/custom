@@ -1,22 +1,33 @@
 #!/bin/sh
 # rpcd backend for luci-app-custom.
 #
-# One page for the three switches that are specific to this image and would
-# otherwise need an SSH session:
+# Two switches that are specific to this image and would otherwise need an SSH
+# session, plus a read-only view of the TTL service so the page can explain the
+# one real interaction between them:
 #
-#   ttl         /etc/config/byte_ttl      - the TTL/HopLimit rewrite
-#   nss_offload /usr/bin/nss-offload      - ECM fast path (mutually exclusive
-#                                           with the TTL rewrite)
+#   nss_offload /usr/bin/nss-offload      - ECM fast path; it bypasses
+#                                           netfilter, so it cannot coexist
+#                                           with any TTL rewrite
 #   agh         AdGuard Home + PassWall2  - the DNS chain installer
+#   (status)    /etc/config/qmodem_ttl    - read-only, owned by
+#                                           luci-app-qmodem-ttlfw4
 #
-# Everything is read from and written to the same files the init scripts use,
-# so the page and the shell can never disagree.
+# TTL is deliberately not settable here. QModem's qmodem_ttl service owns the
+# rewrite (its init writes /etc/nftables.d/99-reset-ttl-from-br-lan.nft from
+# /etc/config/qmodem_ttl and stops ECM when it starts), so the single source of
+# truth is Modem -> QModem -> TTL. This page only reports what that service is
+# doing, because it is the reason the offload switch above is off by default.
+#
+# Everything is read from the same files the init scripts use, so the page and
+# the shell can never disagree.
 
 . /usr/share/libubox/jshn.sh
 
-TTL_INIT=/etc/init.d/byte-ttl
 NSS_OFFLOAD=/usr/bin/nss-offload
 ECM_INIT=/etc/init.d/qca-nss-ecm
+ECM_ACCEL=/sys/kernel/debug/ecm/ecm_classifier_default/accel_mode
+TTL_INIT=/etc/init.d/qmodem_ttl
+TTL_RULESET=/etc/nftables.d/99-reset-ttl-from-br-lan.nft
 AGH_SCRIPT=/usr/libexec/agh-passwall2-install.sh
 
 uciget() { uci -q get "$1" 2>/dev/null; }
@@ -37,30 +48,46 @@ pkg_installed() {
 	fi
 }
 
-do_status() {
-	local ttl_en ttl4 hl6 mode ecm aghen pwred dnsport
+# Set by nss-offload itself: 0=accel 1=no 2=dont-care. Empty when ECM is not
+# loaded or debugfs is not mounted.
+ecm_accel_mode() {
+	cat "$ECM_ACCEL" 2>/dev/null
+}
 
-	ttl_en="$(uciget byte_ttl.main.enable)"; [ -n "$ttl_en" ] || ttl_en=0
-	ttl4="$(uciget byte_ttl.main.ttl4)";    [ -n "$ttl4" ] || ttl4=64
-	hl6="$(uciget byte_ttl.main.hl6)";      [ -n "$hl6" ] || hl6=64
-	mode="$(uciget byte_ttl.main.meta_mode)"; [ -n "$mode" ] || mode=wwan_only
+do_status() {
+	local ttl_en ttl_v ttl_active ttl_installed
+	local ecm aghen pwred dnsport
+
+	ttl_en="$(uciget qmodem_ttl.main.enable)"; [ -n "$ttl_en" ] || ttl_en=0
+	ttl_v="$(uciget qmodem_ttl.main.ttl)";     [ -n "$ttl_v" ]  || ttl_v=64
+
+	# "Active" means the service ran and its ruleset is on disk. The UCI flag
+	# alone lies after a failed firewall restart, and the ruleset alone lies
+	# after the user disabled the service without a restart.
+	if [ -x "$TTL_INIT" ] && [ "$ttl_en" = "1" ] && [ -s "$TTL_RULESET" ]; then
+		ttl_active=1
+	else
+		ttl_active=0
+	fi
+	[ -x "$TTL_INIT" ] && ttl_installed=1 || ttl_installed=0
+
 	ecm_loaded && ecm=1 || ecm=0
 	aghen="$(uciget adguardhome.@adguardhome[0].enabled)"; [ -n "$aghen" ] || aghen=0
-	pwred="$(uciget passwall2.@global[0].dns_redirect)"; [ -n "$pwred" ] || pwred=1
-	dnsport="$(uciget dhcp.@dnsmasq[0].port)"; [ -n "$dnsport" ] || dnsport=53
+	pwred="$(uciget passwall2.@global[0].dns_redirect)";   [ -n "$pwred" ] || pwred=1
+	dnsport="$(uciget dhcp.@dnsmasq[0].port)";             [ -n "$dnsport" ] || dnsport=53
 
 	json_init
 	json_add_object "status"
-	# TTL
-	json_add_boolean "ttl_enabled"  "$ttl_en"
-	json_add_int     "ttl4"         "$ttl4"
-	json_add_int     "hl6"          "$hl6"
-	json_add_string  "ttl_mode"     "$mode"
-	json_add_boolean "ttl_installed" "$([ -x "$TTL_INIT" ] && echo 1 || echo 0)"
+	# TTL (read-only; owned by luci-app-qmodem-ttlfw4)
+	json_add_boolean "ttl_installed" "$ttl_installed"
+	json_add_boolean "ttl_enabled"   "$ttl_en"
+	json_add_int     "ttl_value"     "$ttl_v"
+	json_add_boolean "ttl_active"    "$ttl_active"
 	# NSS offload
 	json_add_boolean "nss_available" "$([ -x "$NSS_OFFLOAD" ] && echo 1 || echo 0)"
 	json_add_boolean "ecm_loaded"    "$ecm"
 	json_add_boolean "ecm_installed" "$([ -x "$ECM_INIT" ] && echo 1 || echo 0)"
+	json_add_string  "ecm_accel"     "$(ecm_accel_mode)"
 	# AdGuard / PassWall2
 	json_add_boolean "agh_installed"      "$(pkg_installed adguardhome && echo 1 || echo 0)"
 	json_add_boolean "agh_luci_installed" "$(pkg_installed luci-app-adguardhome && echo 1 || echo 0)"
@@ -73,54 +100,26 @@ do_status() {
 	json_dump
 }
 
-# ---- TTL -------------------------------------------------------------------
-do_ttl_apply() {
-	local en ttl4 hl6 mode
-	json_get_var en enable
-	json_get_var ttl4 ttl4
-	json_get_var hl6 hl6
-	json_get_var mode meta_mode
-
-	case "$mode" in
-		lan|global|wwan_only) ;;
-		*) mode=wwan_only ;;
-	esac
-
-	uci -q get byte_ttl.main >/dev/null 2>&1 || uci -q add byte_ttl main
-	uci -q set byte_ttl.main.enable="$en"
-	[ -n "$ttl4" ] && uci -q set byte_ttl.main.ttl4="$ttl4"
-	[ -n "$ttl4" ] && uci -q set byte_ttl.main.ttl="$ttl4"
-	[ -n "$hl6" ]  && uci -q set byte_ttl.main.hl6="$hl6"
-	uci -q set byte_ttl.main.meta_mode="$mode"
-	uci -q commit byte_ttl
-
-	out=""
-	if [ "$en" = "1" ]; then
-		"$TTL_INIT" enable  >/dev/null 2>&1
-		out="$("$TTL_INIT" restart 2>&1)"
-	else
-		"$TTL_INIT" stop     >/dev/null 2>&1
-		"$TTL_INIT" disable  >/dev/null 2>&1
-		# Remove the generated ruleset so a firewall reload does not re-add it.
-		rm -f /etc/nftables.d/90-byte-ttl.nft
-		/etc/init.d/firewall reload >/dev/null 2>&1
-		out="TTL rewrite disabled"
-	fi
-
-	json_init
-	json_add_boolean "ok" 1
-	json_add_string "output" "$out"
-	json_dump
-}
-
 # ---- NSS offload -----------------------------------------------------------
 do_nss_set() {
-	local want out
+	local want out rc
+
 	json_get_var want state
 
 	if [ ! -x "$NSS_OFFLOAD" ]; then
 		json_init; json_add_boolean "ok" 0
 		json_add_string "output" "nss-offload not installed"
+		json_dump; return
+	fi
+
+	# Enabling offload while qmodem_ttl is running would silently undo the
+	# rewrite: ECM forwards established flows without consulting netfilter,
+	# and QModem's service stops ECM precisely so that cannot happen. Refuse
+	# rather than hand back a fast path that quietly breaks the TTL.
+	if [ "$want" = "1" ] && [ "$(uciget qmodem_ttl.main.enable)" = "1" ]; then
+		json_init; json_add_boolean "ok" 0
+		json_add_string "output" \
+			"Refusing to enable NSS offload: the TTL rewrite (Modem -> QModem -> TTL) is enabled. Disable it there first."
 		json_dump; return
 	fi
 
@@ -139,6 +138,8 @@ do_nss_set() {
 
 # ---- AdGuard Home + PassWall2 ----------------------------------------------
 do_agh_install() {
+	local out rc
+
 	if [ ! -x "$AGH_SCRIPT" ]; then
 		json_init; json_add_boolean "ok" 0
 		json_add_string "output" "installer missing at $AGH_SCRIPT"
@@ -174,11 +175,18 @@ do_agh_revert() {
 }
 
 case "$1" in
-	status)    do_status      ;;
-	ttl_apply) do_ttl_apply   ;;
-	nss_set)   do_nss_set     ;;
-	agh_install) do_agh_install ;;
-	agh_revert)  do_agh_revert  ;;
+	status)
+		do_status
+		;;
+	nss_set)
+		do_nss_set
+		;;
+	agh_install)
+		do_agh_install
+		;;
+	agh_revert)
+		do_agh_revert
+		;;
 	*)
 		json_init
 		json_add_boolean "ok" 0

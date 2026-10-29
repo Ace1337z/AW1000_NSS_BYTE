@@ -1,0 +1,36 @@
+From: AW1000_NSS_BYTE
+Subject: [PATCH] nss-drv: declare the two non-static nss_core.c entry points
+
+Kernel 6.18 enables -Wmissing-prototypes for every object it compiles, and this
+tree builds with -Werror, so a non-static function with no prototype is a hard
+error:
+
+    nss_core.c:392:6: error: no previous prototype for
+        'nss_core_handle_nss_status_pkt' [-Werror=missing-prototypes]
+    nss_core.c:2762:6: error: no previous prototype for 'nss_skb_reuse'
+    cc1: all warnings being treated as errors
+
+Both are internal to the driver, but nss_skb_reuse() is also referenced from
+nss_init.c's sysctl table, so neither can simply be made static without moving
+code across translation units.
+
+Passing -Wno-missing-prototypes through ccflags-y does not work:
+ccflags-y given on the make command line is a command-line variable, which
+overrides every `ccflags-y += ...` in the driver's own Makefile. The build then
+loses all of its -DNSS_DRV_*_ENABLE feature defines.
+
+Declare the two functions in nss_core.h next to the other "APIs provided by
+nss_core.c" entries. That satisfies the warning and leaves the driver's own
+warning flags and feature defines untouched.
+
+--- a/nss_core.h
++++ b/nss_core.h
+@@ -951,6 +951,8 @@
+ extern uint32_t nss_core_register_handler(struct nss_ctx_instance *nss_ctx, uint32_t interface, nss_core_rx_callback_t cb, void *app_data);
+ extern uint32_t nss_core_unregister_handler(struct nss_ctx_instance *nss_ctx, uint32_t interface);
+ extern void nss_core_init_handlers(struct nss_ctx_instance *nss_ctx);
++extern void nss_core_handle_nss_status_pkt(struct nss_ctx_instance *nss_ctx, struct sk_buff *nbuf);
++extern void nss_skb_reuse(struct sk_buff *nbuf);
+ void nss_core_update_max_ipv4_conn(int conn);
+ void nss_core_update_max_ipv6_conn(int conn);
+ extern void nss_core_register_subsys_dp(struct nss_ctx_instance *nss_ctx, uint32_t if_num,

@@ -13,8 +13,8 @@ STOP=10
 
 boot() {
 	[ -x /usr/libexec/byte-v6-check ] || return 0
-	# Background: the probe waits up to ~60s for the modem interface to settle and must not
-	# hold up the rest of the boot.
+	# Background: the probe waits up to ~75s for the modem's IPv6 interface to
+	# settle and must not hold up the rest of the boot.
 	( /usr/libexec/byte-v6-check ) &
 }
 

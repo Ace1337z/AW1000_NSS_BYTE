@@ -1,14 +1,16 @@
 include $(TOPDIR)/rules.mk
 
-# One LuCI page for the three things this image does differently from stock
-# OpenWrt, so each can be switched without an SSH session:
+# One LuCI page for the two switches that are specific to this image and have
+# no home of their own, so each can be used without an SSH session:
 #
-#   TTL / HopLimit rewrite   /etc/config/byte_ttl + /etc/init.d/byte-ttl
 #   NSS / ECM flow offload   /usr/bin/nss-offload
 #   AdGuard Home + PassWall2 Ace1337z/openwrt-agh-passwall2 (MIT), vendored
 #
-# The first two are mutually exclusive - ECM bypasses netfilter, so offloaded
-# flows keep their original TTL - and the page says so before you toggle it.
+# TTL is not here. It is owned by QModem's qmodem_ttl service
+# (luci-app-qmodem-ttlfw4, /etc/config/qmodem_ttl) and configured at
+# Modem -> QModem -> TTL. This page only reports its state, because the two are
+# mutually exclusive - ECM bypasses netfilter, so offloaded flows keep their
+# original TTL - and the page says so before you toggle offload.
 PKG_NAME:=luci-app-custom
 PKG_VERSION:=1.0
 PKG_RELEASE:=1
@@ -23,7 +25,7 @@ define Package/$(PKG_NAME)
   SECTION:=luci
   CATEGORY:=LuCI
   SUBMENU:=3. Applications
-  TITLE:=Image-specific switches (TTL, NSS offload, AdGuard+PassWall2)
+  TITLE:=Image-specific switches (NSS offload, AdGuard+PassWall2)
   # adguardhome / luci-app-adguardhome are NOT dependencies: the installer
   # pulls them on demand from the feed. Requiring them here would put a ~30 MB
   # Go binary in every image that ships this page.
@@ -32,9 +34,9 @@ define Package/$(PKG_NAME)
 endef
 
 define Package/$(PKG_NAME)/description
-  One page for the TTL/HopLimit rewrite, the NSS/ECM flow-offload switch and
-  the AdGuard Home + PassWall2 DNS chain, with the conflict between the first
-  two spelled out in the UI.
+  One page for the NSS/ECM flow-offload switch and the AdGuard Home +
+  PassWall2 DNS chain, plus a read-only view of the QModem TTL service that
+  offload cannot coexist with.
 endef
 
 define Build/Compile
