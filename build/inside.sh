@@ -85,7 +85,19 @@ missing=""
 for p in $req_pkgs; do
 	# Skip the passwall2 sub-options: they are menu options, not packages.
 	case "$p" in *_INCLUDE_*|*_Transparent_Proxy|*_INCLUDE_*) continue ;; esac
-	if ./scripts/feeds install "$p" >/dev/null 2>&1; then
+	# `feeds install` takes a SOURCE package (directory) name, but
+	# build/config names BINARY packages: kmod-rmnet-nss is built by the
+	# rmnet-nss directory, kmod-qmi_wwan_q by qmi_wwan_q. Try the name as
+	# given, then without the kmod-/luci-app- prefix, before giving up.
+	ok=0
+	for cand in "$p" "${p#kmod-}" "${p#luci-app-}" "${p#luci-}"; do
+		[ -n "$cand" ] || continue
+		if ./scripts/feeds install "$cand" >/dev/null 2>&1; then
+			ok=1
+			break
+		fi
+	done
+	if [ "$ok" = 1 ]; then
 		installed=$((installed+1))
 	else
 		missing="$missing $p"
