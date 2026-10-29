@@ -137,6 +137,33 @@ apply_patches "$BUILDER/patches/feeds/ppe-nss"
 # build/patches/<feed>/*.patch is picked up without touching this script.
 apply_patches "$FEED/build/patches"
 
+# Extra patches for nss-feed packages (build/patches-nss/<pkg>/*.patch).
+# The feed is a src-link to a read-only checkout, so it is replaced by a
+# writable copy; `feeds update` re-links it on the next run.
+if compgen -G "$FEED/build/patches-nss/*/*.patch" >/dev/null; then
+	log "nss feed copy"
+	rm -f feeds/nss
+	rm -rf "$WORK/nss-copy"
+	cp -a "$WORK/nss-packages" "$WORK/nss-copy"
+	rm -rf "$WORK/nss-copy/.git"
+	ln -sfn "$WORK/nss-copy" feeds/nss
+	for p in "$FEED"/build/patches-nss/*/*.patch; do
+		pkg="$(basename "$(dirname "$p")")"
+		log "nss patch $pkg: $(basename "$p")"
+		cp "$p" "feeds/nss/$pkg/patches/"
+	done
+	# Re-link the already-installed nss package dirs at the copy rather than
+	# the original, so the patched sources are what gets built. Only packages
+	# that are already installed are re-linked - `feeds install -a -p nss`
+	# would pull the whole feed back in and reintroduce the Kconfig cycles.
+	for d in package/feeds/nss/*; do
+		[ -e "$d" ] || continue
+		name="$(basename "$d")"
+		rm -f "$d"
+		ln -s "../../../feeds/nss/$name" "$d"
+	done
+fi
+
 # Patches to the OpenWrt tree itself (build/patches-openwrt/*.patch, -p1).
 for p in "$FEED"/build/patches-openwrt/*.patch; do
 	[[ -e "$p" ]] || continue
