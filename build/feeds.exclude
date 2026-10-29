@@ -61,8 +61,12 @@ qmodem/simcom_QMI_WWAN
 #                                depends on (docs/wwan-nss-offload.md).
 #   qmodem/quectel_QMI_WWAN_nss  the same driver built against rmnet-nss, a
 #                                different acceleration design from this tree's
-#                                PPE glue; rmnet-nss itself is in the nss feed.
-#   qmodem/rmnet-nss             upstream copy of the module the nss feed builds.
+#                                PPE glue. Nothing here uses it: qca-nss-drv
+#                                binds raw-IP netdevs itself (patch 0117).
+#   qmodem/rmnet-nss             rmnet_nss_callbacks. Redundant on this tree:
+#                                qmi_wwan_q builds without CONFIG_QCA_NSS_DRV,
+#                                so it never looks the symbol up, and the nss
+#                                feed carries no rmnet-nss package of its own.
 #
 # QModem reaches the driver through CONFIG_PACKAGE_kmod-qmi_wwan_q=y instead;
 # its DEPENDS are conditional (PACKAGE_qmodem_INCLUDE_*:kmod-...), so it never

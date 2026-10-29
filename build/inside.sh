@@ -86,8 +86,8 @@ for p in $req_pkgs; do
 	# Skip the passwall2 sub-options: they are menu options, not packages.
 	case "$p" in *_INCLUDE_*|*_Transparent_Proxy|*_INCLUDE_*) continue ;; esac
 	# `feeds install` takes a SOURCE package (directory) name, but
-	# build/config names BINARY packages: kmod-rmnet-nss is built by the
-	# rmnet-nss directory, kmod-qmi_wwan_q by qmi_wwan_q. Try the name as
+	# build/config names BINARY packages: kmod-qca-nss-drv is built by the
+	# qca-nss-drv directory, kmod-qmi_wwan_q by qmi_wwan_q. Try the name as
 	# given, then without the kmod-/luci-app- prefix, before giving up.
 	ok=0
 	for cand in "$p" "${p#kmod-}" "${p#luci-app-}" "${p#luci-}"; do

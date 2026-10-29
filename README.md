@@ -248,9 +248,11 @@ while TTL is on.
 The first-boot default is TTL 64 with the service enabled
 (`byte/files/etc/uci-defaults/99-byte`).
 
-The image ships with offload off. `kmod-rmnet-nss`, `NSS_DRV_RMNET_ENABLE` and
-`NSS_DRV_C2C_ENABLE` are all present, so `nss-offload on` works - it is a
-choice, not a limitation.
+The image ships with offload off. `NSS_DRV_RMNET_ENABLE` and
+`NSS_DRV_C2C_ENABLE` are both set, so `nss-offload on` works - it is a choice,
+not a limitation. There is no separate `rmnet-nss` module: on this tree
+`qca-nss-drv` binds raw-IP modem netdevs to its rmnet_rx transport itself
+(nss-packages patch 0117), so the modem does not need a per-driver hook.
 
 ---
 

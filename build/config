@@ -64,19 +64,25 @@ CONFIG_TARGET_qualcommax_ipq807x_DEVICE_arcadyan_aw1000=y
 CONFIG_ATH11K_MEM_PROFILE_1G=y
 CONFIG_NSS_MEM_PROFILE_HIGH=y
 
-## Cellular WAN offload. Two halves, both required:
-##   - NSS_DRV_RMNET_ENABLE builds qca-nss-drv's rmnet_rx node support, and
-##     NSS_DRV_C2C_ENABLE gives the n2h node its core-1 hop.
-##   - the rmnet-nss module (nss feed, wwan/driver/rmnet-nss) publishes
-##     rmnet_nss_callbacks; qmi_wwan_q picks it up at load, marks the QMAP
-##     netdevs ARPHRD_RAWIP and hands accelerated packets to it. rmnet_nss_xmit()
-##     is what strips the 14-byte Ethernet header the firmware adds.
-## qmi_wwan_q only wires its own rmnet_nss hooks when built with
-## -DCONFIG_QCA_NSS_DRV, which this package deliberately does not pass (the
-## Makefile comment explains: the driver's own hook would claim the same
-## rx_handler the qca-nss-drv binder wants). The QMAP netdevs are still forced
-## to ARPHRD_RAWIP so ECM classifies them as rawip, and kmod-rmnet-nss is what
-## provides the rmnet_nss_callbacks symbol the driver looks up at load time.
+## Cellular WAN offload: qca-nss-drv's own rmnet_rx transport.
+##
+## NSS_DRV_RMNET_ENABLE builds the rmnet_rx node support inside qca-nss-drv,
+## and NSS_DRV_C2C_ENABLE gives the n2h node its core-1 hop.
+##
+## There is deliberately NO separate rmnet-nss module. On the EDMA tree
+## qca-nss-drv binds every raw-IP modem netdev to an rmnet_rx node pair itself,
+## from a netdevice notifier (nss-packages patch 0117,
+## nss_rmnet_rx-bind-raw-ip-wan-interfaces-to-the-firmware). That is the
+## upstream (JuliusBairaktaris) design and it is what the nss feed ships - the
+## feed has no rmnet-nss package at all.
+##
+## qmi_wwan_q therefore builds WITHOUT its own rmnet_nss hooks: the
+## -DCONFIG_QCA_NSS_DRV define and the `extern rmnet_nss_callbacks` that goes
+## with it are inside #ifdef CONFIG_QCA_NSS_DRV, which this package does not
+## pass (see wwan/qmi_wwan_q/Makefile). The driver's own hook would otherwise
+## claim the same rx_handler the qca-nss-drv binder wants. Its QMAP netdevs are
+## still forced to ARPHRD_RAWIP so ECM classifies them as rawip and the
+## notifier picks them up.
 ##
 ## In practice the modem path here runs on the CPU, which is what XT-Martinez's
 ## proven aw1000-feed does too (its qmi_wwan_q is byte-identical to this one,
@@ -86,16 +92,14 @@ CONFIG_NSS_MEM_PROFILE_HIGH=y
 ## accepts losing the TTL rewrite.
 CONFIG_NSS_DRV_RMNET_ENABLE=y
 CONFIG_NSS_DRV_C2C_ENABLE=y
-## The driver itself. rmnet-nss depends on +kmod-qca-nss-drv, and nothing
-## selects it automatically, so without this line defconfig drops BOTH: the
-## driver is never built and kmod-rmnet-nss fails its dependency check.
-## kmod-qca-nss-dp and nss-firmware come in as its own dependencies.
+## The driver itself. Nothing selects it automatically, so without this line
+## defconfig drops it and the NSS path is never built.
+## kmod-qca-ppe-nss and nss-firmware come in as its own dependencies.
 CONFIG_PACKAGE_kmod-qca-nss-drv=y
 # kmod-qca-nss-dp and nss-firmware are NOT requested here: on the EDMA tree the
 # data path is the in-tree qca_ppe_nss glue (package/kernel/qca-ppe-nss, pulled
 # in by the builder), not the vendor qca-nss-dp + firmware pair. Asking for
 # them fails because neither package exists on this branch.
-CONFIG_PACKAGE_kmod-rmnet-nss=y
 
 # initramfs FIT for USB boot testing (U-Boot: usbboot 0x44000000 0:4)
 CONFIG_TARGET_ROOTFS_INITRAMFS=y
