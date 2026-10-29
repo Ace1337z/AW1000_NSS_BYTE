@@ -159,11 +159,16 @@ make defconfig
 # Anything requested =y that defconfig dropped is a broken image, not a
 # warning: a typo in a package name is otherwise invisible until the router is
 # flashed and the feature is missing.
+# Verify only THIS repo's config, not the builder's common config. The
+# builder's file is shared with its ppe-nss variant and carries symbols that
+# do not exist on the edma tree (qca-ppe-qos, ppe-help, ath11k-nss-wifi,
+# kmod-sched-ets/gred/act-pedit, LUA_ECO_OPENSSL); defconfig drops them and
+# they are not this repo's to satisfy. Ours are, and a dropped one means a
+# feature we promised is missing.
 dropped=()
 while IFS= read -r req; do
 	grep -qxF "$req" .config || dropped+=("$req")
-done < <(cat "${configs[@]}" |
-	grep -E '^CONFIG_[A-Za-z0-9_-]+=' |
+done < <(grep -E '^CONFIG_[A-Za-z0-9_-]+=' "$FEED/build/config" |
 	awk -F= '{ last[$1] = $0 } END { for (s in last) print last[s] }' |
 	grep -vE '=n$')
 if ((${#dropped[@]})); then

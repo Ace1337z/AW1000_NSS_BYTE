@@ -36,7 +36,12 @@ CONFIG_VERSION_REPO="https://downloads.openwrt.org/snapshots"
 ## Package manager: APK, not OPKG. The tree defaults to this, but pin it so a
 ## future rebase cannot quietly flip the image back to ipkg.
 CONFIG_USE_APK=y
-CONFIG_PACKAGE_apk-mbedtls=y
+# apk-mbedtls and apk-openssl are a Kconfig choice, and the builder's common
+# config already selects openssl - which is what this image wants anyway,
+# because passwall2, curl and Tailscale all need libopenssl. Asking for
+# mbedtls as well is silently dropped, so it is not requested.
+# CONFIG_PACKAGE_apk-openssl is set by the builder
+# CONFIG_PACKAGE_apk-mbedtls is not set
 # Self-built packages are unsigned; install them with `apk add --allow-untrusted`
 # (see README). Signing would need a key baked into every image.
 # CONFIG_SIGN_EACH_PACKAGE is not set
@@ -120,7 +125,10 @@ CONFIG_TARGET_INITRAMFS_COMPRESSION_XZ=y
 ## of the 128 KiB size, and the extract difference against 128 KiB is under 1%.
 ## Do not "optimise" this to 1024 KiB for the 6 MiB.
 CONFIG_TARGET_ROOTFS_SQUASHFS=y
-CONFIG_SQUASHFS_XZ=y
+# CONFIG_SQUASHFS_XZ is NOT set here: it is a kernel symbol, forced to =y by
+# the fs-squashfs module's own KCONFIG (package/kernel/linux/modules/fs.mk),
+# so it never appears in .config as a package symbol. image.mk reads it to
+# pick `-comp xz` for mksquashfs, which is what matters.
 CONFIG_TARGET_SQUASHFS_BLOCK_SIZE=256
 CONFIG_TARGET_SQUASHFS_BLOCK_READERS=4
 CONFIG_TARGET_SQUASHFS_SMALL_READERS=4
@@ -234,7 +242,11 @@ CONFIG_PACKAGE_luci-app-passwall2=y
 # Nftables transparent proxy (firewall4 is what this tree ships).
 CONFIG_PACKAGE_luci-app-passwall2_Nftables_Transparent_Proxy=y
 CONFIG_PACKAGE_luci-app-passwall2_Iptables_Transparent_Proxy=n
-CONFIG_PACKAGE_luci-app-passwall2_INCLUDE_IPv6_Nat=y
+# INCLUDE_IPv6_Nat depends on PACKAGE_ip6tables (the iptables backend).
+# This image is nftables-only, so the option cannot be selected and asking for
+# it just trips the verification step. IPv6 NAT for passwall2 is handled by
+# the nftables ruleset instead.
+# CONFIG_PACKAGE_luci-app-passwall2_INCLUDE_IPv6_Nat is not set
 # Core protocol support. xray-core is a hard dependency of the LuCI app
 # already; the pins in build/feeds make it 26.3.27.
 CONFIG_PACKAGE_luci-app-passwall2_INCLUDE_Shadowsocks_Rust_Client=y
@@ -335,7 +347,9 @@ CONFIG_PACKAGE_firewall4=y
 ## needs nothing else at runtime.
 
 ## BYTE runtime: TTL/HopLimit rewrite, MTU clamp, IPv6 sanity, self-check.
-CONFIG_PACKAGE_nftables=y
+# The nftables source package builds nftables-json (and nftables-nojson);
+# there is no bare `nftables` binary package on this tree.
+CONFIG_PACKAGE_nftables-json=y
 CONFIG_PACKAGE_kmod-nft-core=y
 CONFIG_PACKAGE_kmod-nft-nat=y
 
