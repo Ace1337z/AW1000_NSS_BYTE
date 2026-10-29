@@ -19,3 +19,15 @@ luci_smstool/luci-app-sms-tool-js
 # where it comes from. To use the LuCI page instead, drop this line, remove
 # byte-ttl from the overlay, and set nftttl.ttl.enabled=1.
 dotycat/luci-app-nft-ttl
+
+# The nss feed's wwan/app/ tree ships its own modem managers and LuCI pages:
+#   luci-app-usbmodem   depends on kmod-qmi_wwan_q, which quectel-cm selects,
+#                       which makes Kconfig report a recursive dependency
+#   luci-app-pcimodem   the PCIe-MHI sibling, same stack
+#   luci-proto-quectel  this repo builds its own (wwan/luci-proto-quectel)
+# None of them are wanted: the modem UI here is luci-app-aw1000-modem, and the
+# protocol form comes from wwan/. Excluding the directories keeps `feeds
+# install -a` from pulling them in.
+nss/luci-app-usbmodem
+nss/luci-app-pcimodem
+nss/luci-proto-quectel

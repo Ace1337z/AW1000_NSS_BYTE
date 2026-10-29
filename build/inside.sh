@@ -30,6 +30,17 @@ die() { printf 'error: %s\n' "$*" >&2; exit 1; }
 # ---------------------------------------------------------------- 1. feeds
 log "feeds.conf"
 cp feeds.conf.default feeds.conf
+# Drop feeds this image has no use for, before the scan. Kconfig walks every
+# feed's Config.in at `feeds update` time, so a feed with a broken dependency
+# breaks the build even when none of its packages are installed:
+#   video  qt5base has an OpenGL choice that Kconfig reports as recursive, and
+#          wayland wants libffi which the feed does not carry. Nothing here
+#          uses Qt, Wayland or anything else in it.
+# Kept as a sed on the copy so feeds.conf.default stays pristine and the reason
+# lives here rather than in a divergent default file.
+for dead in video; do
+	sed -i "\#^src-git ${dead} #d" feeds.conf
+done
 # @WORK@ keeps build/feeds free of absolute paths, so the same file works on a
 # runner (where $WORK is under the checkout) and on a workstation.
 sed "s|@WORK@|$WORK|g" "$FEED/build/feeds" | grep -vE '^\s*(#|$)' >>feeds.conf

@@ -1,0 +1,13 @@
+{
+	"luci-app-custom": {
+		"description": "Access the custom image switches (TTL, NSS offload, AGH+PassWall2)",
+		"read": {
+			"ubus": { "custom": [ "status" ] },
+			"uci": [ "byte_ttl", "dhcp", "adguardhome", "passwall2" ]
+		},
+		"write": {
+			"ubus": { "custom": [ "ttl_apply", "nss_set", "agh_install", "agh_revert" ] },
+			"uci": [ "byte_ttl", "dhcp", "adguardhome", "passwall2" ]
+		}
+	}
+}

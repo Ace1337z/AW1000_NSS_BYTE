@@ -1,27 +1,17 @@
 # AW1000 runtime bring-up (runs every boot, background).
 #
 # Ported from BYTE by ACE, adapted to this image's quectel-cm + qmi_wwan_q
-# data path: the qmodem-iface-heal block is gone (quectel-cm does not delete
-# network.wan on redial; the "wwan" interface stays configured), everything
-# else survives. Subshells below run in the background so boot is not held up.
+# data path. Subshells run in the background so boot is not held up.
+#
+# Deliberately NOT here: re-asserting the TTL rewrite or stopping ECM on every
+# boot. Those are user choices now - they live in /etc/config/byte_ttl and are
+# switched from Services -> Custom, which persists them across reboots. Forcing
+# them from rc.local would silently undo whatever the user picked.
 
-# TTL 64 on modem egress must be active on every boot, including after a
-# sysupgrade that preserved /etc/config (uci-defaults only runs once).
-# ECM is stopped first: it bypasses netfilter and would leak the real TTL.
-if [ -x /etc/init.d/qca-nss-ecm ]; then
-	/etc/init.d/qca-nss-ecm enabled >/dev/null 2>&1 && {
-		/etc/init.d/qca-nss-ecm disable 2>/dev/null
-		/etc/init.d/qca-nss-ecm stop 2>/dev/null
-	}
-fi
-if [ -x /etc/init.d/byte-ttl ]; then
-	/etc/init.d/byte-ttl enable 2>/dev/null
-	/etc/init.d/byte-ttl running >/dev/null 2>&1 || \
-		/etc/init.d/byte-ttl start 2>/dev/null
-fi
-
+# ---- CPU spread -------------------------------------------------------------
 # RPS/XPS across all cores for the modem interfaces; also re-runs on netifd
 # events because the wwan channels only appear once quectel-cm connects.
+# This is not a user-facing switch - it is always correct - so it stays here.
 if [ -x /etc/init.d/byte-affinity ]; then
 	/etc/init.d/byte-affinity enable 2>/dev/null
 	/etc/init.d/byte-affinity running >/dev/null 2>&1 || \
@@ -37,13 +27,10 @@ fi
 	# Resolve the AT port by USB interface number, not by ttyUSB number: a
 	# port held open across a modem reset can come back under a different
 	# name (ttyUSB3 -> ttyUSB4), and every tool pinned to the old name then
-	# fails. aw1000-modem-ports already does this lookup for the LED daemon
-	# (interface 3 = second AT port); fxsd uses interface 2 for the same
-	# reason. Fall back to the old fixed name if the helper is missing.
-	# fxsd's AT_IFACE is 2 (the first AT port), so the probe must use the
-	# same port fxsd will drive, not the LED daemon's second AT port.
+	# fails. fxsd's AT_IFACE is 2 (the first AT port), so probe the same
+	# port fxsd will drive - not the LED daemon's second AT port.
 	ATPORT="$(/usr/sbin/aw1000-modem-ports port 02 2>/dev/null)"
-	[ -n "$ATPORT" ] || ATPORT="/dev/ttyUSB3"
+	[ -n "$ATPORT" ] || ATPORT="/dev/ttyUSB2"
 	QDAI_SLAVE="AT+QDAI=x,1,0,4,0,0,1,1"
 
 	# Stale guard left by a reboot keeps fxsd from starting; clear it.
@@ -51,18 +38,17 @@ fi
 		/etc/init.d/fxsd clear_guard 2>/dev/null
 	fi
 
-	# The PCM check below deliberately uses sms_tool directly rather than
-	# going through ubus at-daemon: it must work even if the daemon is slow
-	# to come up, and sms_tool needs no service.
+	# The PCM check uses sms_tool directly rather than ubus at-daemon: it
+	# must work even if the daemon is slow to come up, and sms_tool needs no
+	# service.
 	at_q() {
 		command -v sms_tool >/dev/null 2>&1 || return 1
 		timeout 6 sms_tool -d "$ATPORT" at "$1" 2>/dev/null | tr -d '\r'
 	}
 
-	# Wait for the modem's AT port to answer before touching PCM.
-	# sms_tool's output for a bare "AT" is only the command echo - it does
-	# not include OK on this modem - so probe with a command that has a real
-	# response and test for that instead.
+	# Wait for the modem's AT port to answer. sms_tool's output for a bare
+	# "AT" is only the command echo - it does not include OK on this modem -
+	# so probe with a command that has a real response.
 	i=0
 	while [ "$i" -lt 60 ]; do
 		if [ -c "$ATPORT" ] && at_q "AT+QDAI?" | grep -q '+QDAI:'; then
@@ -93,10 +79,8 @@ fi
 	# fxsd drives the phone, but it sends every AT command through
 	# 'ubus call at-daemon sendat'. Without that ubus object it loops forever
 	# in wait_modem() and the phone sits at "Waiting for the modem", even
-	# though the modem is perfectly reachable via sms_tool. So make sure the
-	# daemon is actually answering before fxsd is started; fxsd would retry
-	# every 3s anyway, but waiting here avoids a pointless log churn and the
-	# case where procd marks the service failed.
+	# though the modem is reachable via sms_tool. Wait for the daemon before
+	# starting fxsd, so procd does not mark the service failed.
 	if [ -x /etc/init.d/ubus-at-daemon ]; then
 		/etc/init.d/ubus-at-daemon start 2>/dev/null
 		i=0
@@ -118,10 +102,9 @@ fi
 
 # ---- Tailscale self-heal (background) ---------------------------------------
 # tailscaled sometimes comes up "Running" and reports its Tailscale IP, yet
-# tailscale0 is left with no IPv4/IPv6 address at all. The result is a node
-# that looks connected but is unreachable: MagicDNS at 100.100.100.100 times
-# out and no peer can be dialled. Waiting for the address and restarting the
-# daemon if it never lands fixes it without a reboot.
+# tailscale0 is left with no address at all: the node looks connected but is
+# unreachable. Waiting for the address and restarting the daemon if it never
+# lands fixes it without a reboot. Only runs when Tailscale is installed.
 (
 	[ -x /usr/sbin/tailscaled ] || exit 0
 	ts_ip=$(/usr/sbin/tailscale ip -4 2>/dev/null | head -1)

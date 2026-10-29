@@ -1,0 +1,14 @@
+{
+	"admin/services/custom": {
+		"title": "Custom",
+		"order": 60,
+		"action": {
+			"type": "view",
+			"path": "custom/overview"
+		},
+		"depends": {
+			"acl": [ "luci-app-custom" ],
+			"uci": { "byte_ttl": true }
+		}
+	}
+}

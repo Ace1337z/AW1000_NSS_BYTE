@@ -75,16 +75,6 @@ fi
 # does not touch the NSS delivery path.)
 log "packet_steering left off (NSS default; see 99-byte to enable)"
 
-# ---- Tailscale gate --------------------------------------------------------
-# The package service starts tailscaled (13 MB private RSS) even with no
-# credentials configured. The gate starts it only once a state file exists,
-# and still lets `tailscale up` / LuCI start it directly.
-if [ -x /etc/init.d/byte-tailscale-gate ]; then
-	/etc/init.d/byte-tailscale-gate enable 2>/dev/null
-	[ -x /etc/init.d/tailscale ] && /etc/init.d/tailscale disable 2>/dev/null
-	log "byte-tailscale-gate enabled"
-fi
-
 # ---- NSS/ECM flow offload --------------------------------------------------
 # ECM bypasses netfilter entirely, so offloaded flows keep their original TTL
 # and defeat the rewrite above. Keep it installed - /usr/bin/nss-offload can

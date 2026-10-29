@@ -1,0 +1,188 @@
+#!/bin/sh
+# rpcd backend for luci-app-custom.
+#
+# One page for the three switches that are specific to this image and would
+# otherwise need an SSH session:
+#
+#   ttl         /etc/config/byte_ttl      - the TTL/HopLimit rewrite
+#   nss_offload /usr/bin/nss-offload      - ECM fast path (mutually exclusive
+#                                           with the TTL rewrite)
+#   agh         AdGuard Home + PassWall2  - the DNS chain installer
+#
+# Everything is read from and written to the same files the init scripts use,
+# so the page and the shell can never disagree.
+
+. /usr/share/libubox/jshn.sh
+
+TTL_INIT=/etc/init.d/byte-ttl
+NSS_OFFLOAD=/usr/bin/nss-offload
+ECM_INIT=/etc/init.d/qca-nss-ecm
+AGH_SCRIPT=/usr/libexec/agh-passwall2-install.sh
+
+uciget() { uci -q get "$1" 2>/dev/null; }
+
+# Is ECM actually loaded? That, not the init script's enabled flag, is what
+# decides whether the fast path is live.
+ecm_loaded() {
+	grep -q '^qca_nss_ecm ' /proc/modules 2>/dev/null && return 0
+	[ -d /sys/module/qca_nss_ecm ] && return 0
+	return 1
+}
+
+pkg_installed() {
+	if command -v apk >/dev/null 2>&1; then
+		apk info -e "$1" >/dev/null 2>&1
+	else
+		opkg list-installed 2>/dev/null | grep -q "^$1 "
+	fi
+}
+
+do_status() {
+	local ttl_en ttl4 hl6 mode ecm aghen pwred dnsport
+
+	ttl_en="$(uciget byte_ttl.main.enable)"; [ -n "$ttl_en" ] || ttl_en=0
+	ttl4="$(uciget byte_ttl.main.ttl4)";    [ -n "$ttl4" ] || ttl4=64
+	hl6="$(uciget byte_ttl.main.hl6)";      [ -n "$hl6" ] || hl6=64
+	mode="$(uciget byte_ttl.main.meta_mode)"; [ -n "$mode" ] || mode=wwan_only
+	ecm_loaded && ecm=1 || ecm=0
+	aghen="$(uciget adguardhome.@adguardhome[0].enabled)"; [ -n "$aghen" ] || aghen=0
+	pwred="$(uciget passwall2.@global[0].dns_redirect)"; [ -n "$pwred" ] || pwred=1
+	dnsport="$(uciget dhcp.@dnsmasq[0].port)"; [ -n "$dnsport" ] || dnsport=53
+
+	json_init
+	json_add_object "status"
+	# TTL
+	json_add_boolean "ttl_enabled"  "$ttl_en"
+	json_add_int     "ttl4"         "$ttl4"
+	json_add_int     "hl6"          "$hl6"
+	json_add_string  "ttl_mode"     "$mode"
+	json_add_boolean "ttl_installed" "$([ -x "$TTL_INIT" ] && echo 1 || echo 0)"
+	# NSS offload
+	json_add_boolean "nss_available" "$([ -x "$NSS_OFFLOAD" ] && echo 1 || echo 0)"
+	json_add_boolean "ecm_loaded"    "$ecm"
+	json_add_boolean "ecm_installed" "$([ -x "$ECM_INIT" ] && echo 1 || echo 0)"
+	# AdGuard / PassWall2
+	json_add_boolean "agh_installed"      "$(pkg_installed adguardhome && echo 1 || echo 0)"
+	json_add_boolean "agh_luci_installed" "$(pkg_installed luci-app-adguardhome && echo 1 || echo 0)"
+	json_add_boolean "agh_enabled"        "$aghen"
+	json_add_boolean "passwall_installed" "$(pkg_installed luci-app-passwall2 && echo 1 || echo 0)"
+	json_add_int     "dnsmasq_port"       "$dnsport"
+	json_add_boolean "passwall_redirect"  "$pwred"
+	json_add_string  "agh_installer"      "$([ -x "$AGH_SCRIPT" ] && echo present || echo missing)"
+	json_close_object
+	json_dump
+}
+
+# ---- TTL -------------------------------------------------------------------
+do_ttl_apply() {
+	local en ttl4 hl6 mode
+	json_get_var en enable
+	json_get_var ttl4 ttl4
+	json_get_var hl6 hl6
+	json_get_var mode meta_mode
+
+	case "$mode" in
+		lan|global|wwan_only) ;;
+		*) mode=wwan_only ;;
+	esac
+
+	uci -q get byte_ttl.main >/dev/null 2>&1 || uci -q add byte_ttl main
+	uci -q set byte_ttl.main.enable="$en"
+	[ -n "$ttl4" ] && uci -q set byte_ttl.main.ttl4="$ttl4"
+	[ -n "$ttl4" ] && uci -q set byte_ttl.main.ttl="$ttl4"
+	[ -n "$hl6" ]  && uci -q set byte_ttl.main.hl6="$hl6"
+	uci -q set byte_ttl.main.meta_mode="$mode"
+	uci -q commit byte_ttl
+
+	out=""
+	if [ "$en" = "1" ]; then
+		"$TTL_INIT" enable  >/dev/null 2>&1
+		out="$("$TTL_INIT" restart 2>&1)"
+	else
+		"$TTL_INIT" stop     >/dev/null 2>&1
+		"$TTL_INIT" disable  >/dev/null 2>&1
+		# Remove the generated ruleset so a firewall reload does not re-add it.
+		rm -f /etc/nftables.d/90-byte-ttl.nft
+		/etc/init.d/firewall reload >/dev/null 2>&1
+		out="TTL rewrite disabled"
+	fi
+
+	json_init
+	json_add_boolean "ok" 1
+	json_add_string "output" "$out"
+	json_dump
+}
+
+# ---- NSS offload -----------------------------------------------------------
+do_nss_set() {
+	local want out
+	json_get_var want state
+
+	if [ ! -x "$NSS_OFFLOAD" ]; then
+		json_init; json_add_boolean "ok" 0
+		json_add_string "output" "nss-offload not installed"
+		json_dump; return
+	fi
+
+	if [ "$want" = "1" ]; then
+		out="$("$NSS_OFFLOAD" on 2>&1)"
+	else
+		out="$("$NSS_OFFLOAD" off 2>&1)"
+	fi
+	rc=$?
+
+	json_init
+	json_add_boolean "ok" "$([ "$rc" = 0 ] && echo 1 || echo 0)"
+	json_add_string "output" "$out"
+	json_dump
+}
+
+# ---- AdGuard Home + PassWall2 ----------------------------------------------
+do_agh_install() {
+	if [ ! -x "$AGH_SCRIPT" ]; then
+		json_init; json_add_boolean "ok" 0
+		json_add_string "output" "installer missing at $AGH_SCRIPT"
+		json_dump; return
+	fi
+	out="$("$AGH_SCRIPT" 2>&1)"
+	rc=$?
+	printf '%s\n' "$out" >/var/log/agh-passwall2.log
+
+	json_init
+	json_add_boolean "ok" "$([ "$rc" = 0 ] && echo 1 || echo 0)"
+	json_add_int "rc" "$rc"
+	json_add_string "output" "$out"
+	json_dump
+}
+
+do_agh_revert() {
+	uci -q set dhcp.@dnsmasq[0].port='53'
+	uci -q commit dhcp
+	uci -q set adguardhome.@adguardhome[0].enabled='0'
+	uci -q commit adguardhome 2>/dev/null
+	[ -x /etc/init.d/adguardhome ] && {
+		/etc/init.d/adguardhome stop    >/dev/null 2>&1
+		/etc/init.d/adguardhome disable >/dev/null 2>&1
+	}
+	rm -f /tmp/dnsmasq.d/dnsmasq-passwall2.conf
+	/etc/init.d/dnsmasq restart >/dev/null 2>&1
+
+	json_init
+	json_add_boolean "ok" 1
+	json_add_string "output" "dnsmasq restored to :53, AdGuard Home stopped"
+	json_dump
+}
+
+case "$1" in
+	status)    do_status      ;;
+	ttl_apply) do_ttl_apply   ;;
+	nss_set)   do_nss_set     ;;
+	agh_install) do_agh_install ;;
+	agh_revert)  do_agh_revert  ;;
+	*)
+		json_init
+		json_add_boolean "ok" 0
+		json_add_string "output" "unknown method: $1"
+		json_dump
+		;;
+esac
