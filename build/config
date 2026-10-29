@@ -86,6 +86,13 @@ CONFIG_NSS_MEM_PROFILE_HIGH=y
 ## losing the TTL rewrite.
 CONFIG_NSS_DRV_RMNET_ENABLE=y
 CONFIG_NSS_DRV_C2C_ENABLE=y
+## The driver itself. rmnet-nss depends on +kmod-qca-nss-drv, and nothing
+## selects it automatically, so without this line defconfig drops BOTH: the
+## driver is never built and kmod-rmnet-nss fails its dependency check.
+## kmod-qca-nss-dp and nss-firmware come in as its own dependencies.
+CONFIG_PACKAGE_kmod-qca-nss-drv=y
+CONFIG_PACKAGE_kmod-qca-nss-dp=y
+CONFIG_PACKAGE_nss-firmware=y
 CONFIG_PACKAGE_kmod-rmnet-nss=y
 
 # initramfs FIT for USB boot testing (U-Boot: usbboot 0x44000000 0:4)
