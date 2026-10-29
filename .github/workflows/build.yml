@@ -73,6 +73,24 @@ jobs:
           cp build.log out/build.log 2>/dev/null || true
           ls -l out
 
+      - name: Publish build log to ci-log branch on failure
+        if: failure()
+        run: |
+          # Artifacts and the job log both need API auth to read, which makes a
+          # failed run impossible to diagnose from outside the web UI. Commit
+          # the tail to a throwaway branch instead: `git fetch origin ci-log`
+          # then works for anyone with read access.
+          mkdir -p /tmp/cl && cp build.log /tmp/cl/build.log 2>/dev/null || \
+            echo "(build.log missing)" > /tmp/cl/build.log
+          tail -c 200000 /tmp/cl/build.log > /tmp/cl/build-tail.log
+          cd /tmp/cl
+          git init -q .
+          git config user.email ci@localhost
+          git config user.name ci
+          git add -A
+          git commit -q -m "build log for ${GITHUB_SHA}" || true
+          git push -f "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" HEAD:ci-log
+
       - name: Upload images and build log
         if: always()
         uses: actions/upload-artifact@v4
