@@ -29,6 +29,7 @@ graphs for WAN traffic, modem traffic, signal, temperature, load and offload.
 | **Default Wi-Fi** | SSID `BYTE`, open, both radios on |
 | **Default root password** | empty |
 | **Hostname** | `AW1000` |
+| **Image name** | `AW1000_NSS_BYTE` (VERSION_DIST), version `1.0` |
 
 Every source is pinned to a full 40-character SHA in `build/versions` and
 `build/feeds`, so two builds of the same commit of this repo produce the same
@@ -82,7 +83,7 @@ aw1000/       package feed built from this repo
   aw1000-defaults/          wwan interface, LEDs, first-boot config
   luci-app-aw1000-modem/    SMS, bands, cell scan/lock, AT console
   luci-app-modeminfo/       serving-cell page
-  luci-app-agh-passwall2/   one-click AdGuard Home + PassWall2 DNS setup
+  luci-app-custom/          the Custom page: TTL, NSS offload, AGH+PassWall2
   ubus-at-daemon/           AT transport for the phone port (vendored)
 byte/         runtime overlay: TTL, MTU, IPv6, tuning, branding
 build/        build.sh, inside.sh, config, versions, feeds, patches
@@ -165,7 +166,11 @@ nss-offload on     # accelerate, but TTL is no longer guaranteed
 nss-offload off    # TTL correct, modem path runs on the CPU
 ```
 
-The image ships with it off. `kmod-rmnet-nss`, `NSS_DRV_RMNET_ENABLE` and
+Both are switches on the **Services → Custom** page, which persists the choice
+in `/etc/config/byte_ttl` and warns when you would enable offload while the TTL
+rewrite is still on.
+
+The image ships with offload off. `kmod-rmnet-nss`, `NSS_DRV_RMNET_ENABLE` and
 `NSS_DRV_C2C_ENABLE` are all present, so `nss-offload on` works - it is a
 choice, not a limitation.
 
@@ -180,11 +185,10 @@ choice, not a limitation.
 | `byte-v6` + `byte-v6-check` | IPv6 sanity, as above |
 | `byte-affinity` | Spreads the modem's USB interrupts and RPS across all four cores. They otherwise all land on one core, which saturates long before the link does |
 | `byte-selfcheck` | Verifies governor, `fq`/`bbr`, MTU probing, conntrack and socket buffers at boot and on `ifup`. Logs mismatches, does not fail the boot |
-| `byte-tailscale-gate` | Starts `tailscaled` only once a state file with credentials exists, instead of holding ~13 MB of RSS on routers that never use it. Fails open |
 | `nss-offload` | `on` / `off` / `status` for NSS/ECM |
 | `etc/sysctl.conf` | `fq` + `bbr`, `tcp_fastopen=3`, `tcp_slow_start_after_idle=0`, `netdev_max_backlog=16384`, `netdev_budget=2400`, 4 MB socket buffers, 32768 conntrack entries |
 | `etc/vnstat.conf` | `DatabaseDir "/etc/vnstat"` - the package default is tmpfs, so history would vanish on reboot |
-| `etc/rc.local` | Re-asserts TTL and ECM-off each boot, brings up the phone port, self-heals `tailscale0` |
+| `etc/rc.local` | Brings up the phone port (PCM slave check, waits for the `at-daemon` ubus object, starts `fxsd`), spreads the modem IRQs across the cores, and self-heals `tailscale0` when Tailscale is installed. It deliberately does **not** re-assert the TTL rewrite or stop ECM: those are user choices, switched from Services → Custom |
 | `www/.../footstrap/` | BYTE logo and brand CSS |
 
 `packet_steering` is **off**, matching the NSS feed's own default. Its comment
@@ -202,22 +206,24 @@ uci commit network && /etc/init.d/packet_steering restart
 
 ### LuCI
 
+Ten `luci-app-*` packages are in the image. Everything else LuCI-side is a
+library (`luci-lib-jsonc`, `luci-compat`), a protocol handler (`luci-proto-*`),
+the theme, or the dashboard module.
+
 | App | |
 |---|---|
 | `luci-app-aw1000-modem` | SMS conversations, bands, cell scan and lock, AT console |
 | `luci-app-modeminfo` | serving-cell / SA page |
 | `luci-app-fxs` | RJ11 phone port: dialling, history, caller ID |
-| `luci-app-agh-passwall2` | one-click AdGuard Home + PassWall2 DNS setup |
+| `luci-app-custom` | the Custom page: TTL rewrite, NSS offload, AdGuard Home + PassWall2 | this repo |
 | `luci-app-passwall2` | proxy, 26.4.10 |
 | `luci-app-sqm` | Smart Queue Management |
 | `luci-app-netstat` | live per-interface counters, connections |
 | `luci-app-vnstat2` | long-term traffic graphs |
 | `luci-app-ddns` | dynamic DNS |
-| `luci-app-wol` | wake-on-LAN |
 | `luci-app-footstrap-files` | file manager for the theme |
 
-Plus `luci-mod-dashboard`, `luci-theme-footstrap`, `luci-proto-quectel` and
-`luci-proto-wireguard`.
+Plus `luci-mod-dashboard`, `luci-theme-footstrap` and `luci-proto-quectel`.
 
 ### Proxy
 
@@ -236,9 +242,8 @@ HTTPS/SVCB records reach clients.
 
 ### Other
 
-`btop`, `htop`, `iperf3`, `wireguard-tools`, `qrencode`, `etherwake`,
-`udp-broadcast-relay-redux`, `zram-swap` (433 MB, `lzo-rle`), `vnstat2` +
-`vnstati2`, USB storage with exFAT/NTFS3/ext4.
+`htop`, `iperf3`, `udp-broadcast-relay-redux`, `zram-swap` (433 MB, `lzo-rle`),
+`vnstat2` + `vnstati2`, USB storage with exFAT/NTFS3/ext4.
 
 ### Built, published, not in the image
 
@@ -254,6 +259,10 @@ does:
 | `luci-app-nikki` | same TPROXY/nftables hooks as passwall2 - one proxy at a time | `apk add --allow-untrusted luci-app-nikki` |
 | `luci-app-openclash` | same conflict as nikki | `apk add --allow-untrusted luci-app-openclash` |
 | `luci-app-nft-ttl` | own `ttl64.nft` + `br-lan` rule; `byte-ttl` already owns this. Excluded in `feeds.exclude` | drop that line and rebuild |
+| `luci-app-wol`, `etherwake` | wake-on-LAN needs a wired LAN peer to wake, and the cellular link is the WAN | `apk add --allow-untrusted luci-app-wol etherwake` |
+| `luci-proto-wireguard`, `wireguard-tools` | a VPN client is a per-user choice, not a default on a cellular router | `apk add --allow-untrusted luci-proto-wireguard wireguard-tools` |
+| `btop` | a second terminal monitor next to `htop`; image space for a duplicate | `apk add --allow-untrusted btop` |
+| `qrencode` | only a few LuCI pages use it to draw QR codes | `apk add --allow-untrusted qrencode` |
 
 Every dependency these declare is already in the image, so installing one does
 not pull a dependency tree.
@@ -280,13 +289,22 @@ waits for the `at-daemon` ubus object, then starts `fxsd`.
 
 ---
 
-## AdGuard Home + PassWall2
+## Services → Custom
 
-Both want to own DNS. Left alone they fight over port 53 and you get
-"problem detected" from PassWall's hijack check, or `google.com` silently
-resolving to forcesafesearch.
+One page for the three things this image does differently from stock OpenWrt.
+All three would otherwise need an SSH session.
 
-**Services → AdGuard + PassWall2** is a one-click wrapper around
+**TTL / HopLimit rewrite** — enable it, pick the TTL and HopLimit values and
+the scope (`wwan_only`, `lan` or `global`). Writes `/etc/config/byte_ttl` and
+reloads the ruleset, so the setting survives a reboot. `rc.local` no longer
+forces it on at boot: that would silently undo whatever you choose here.
+
+**NSS / ECM flow offload** — turn the fast path on or off. The page says
+plainly why the two are mutually exclusive: ECM bypasses netfilter, so
+offloaded flows keep their original TTL. It warns before you enable offload
+while TTL rewriting is on, and tells you to turn TTL off first if that matters.
+
+**AdGuard Home + PassWall2** — a one-click wrapper around
 [Ace1337z/openwrt-agh-passwall2](https://github.com/Ace1337z/openwrt-agh-passwall2):
 
 ```
@@ -295,11 +313,14 @@ LAN clients → router:53 (AdGuard Home: filtering)
                 └→ .lan / .local / .home.arpa → 127.0.0.1:54 (dnsmasq)
 ```
 
-It moves dnsmasq to :54, points AdGuard at PassWall2, turns SafeSearch off, and
-has a revert button. The installer is vendored rather than fetched at click
-time - a LuCI button should not pipe a remote script into a root shell, and the
-router may have no WAN when pressed. The only change from upstream is
-`apk add --allow-untrusted` first, since this image builds unsigned packages.
+Both want to own DNS. Left alone they fight over port 53 and you get
+"problem detected" from PassWall's hijack check, or `google.com` silently
+resolving to forcesafesearch. The setup moves dnsmasq to :54, points AdGuard at
+PassWall2, turns SafeSearch off, and has a revert button. The installer is
+vendored rather than fetched at click time - a LuCI button should not pipe a
+remote script into a root shell, and the router may have no WAN when pressed.
+The only change from upstream is `apk add --allow-untrusted` first, since this
+image builds unsigned packages.
 
 ---
 

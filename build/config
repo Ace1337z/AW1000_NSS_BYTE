@@ -18,6 +18,12 @@
 ## VERSION_NUMBER is what sysupgrade shows. VERSION_REPO is deliberately the
 ## upstream snapshot repo, not a custom one: this image has no package server,
 ## and pointing it at a URL that does not exist makes `apk update` fail noisily.
+## IMAGEOPT gates the whole image-config menu (VERSIONOPT, init options,
+## preinit, ...). It defaults to n and nothing in the tree selects it - it is
+## a menuconfig-only option - so without this line every VERSION_* symbol
+## below is silently dropped by defconfig and the image keeps reporting itself
+## as plain "OpenWrt SNAPSHOT".
+CONFIG_IMAGEOPT=y
 CONFIG_VERSIONOPT=y
 CONFIG_VERSION_DIST="AW1000_NSS_BYTE"
 CONFIG_VERSION_NUMBER="1.0"
