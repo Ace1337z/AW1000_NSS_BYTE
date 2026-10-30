@@ -126,9 +126,29 @@ jobs:
           path: work/openwrt/dl
           key: aw1000-nss-byte-dl-${{ hashFiles('build/versions', 'build/feeds') }}
 
+      # The whole log, untruncated. This used to keep only the first and last
+      # 400 KB of build.log, on the theory that the prepare stage is at the top
+      # and the error is at the bottom. That is only true when the failure
+      # happens in the last few minutes of a five-hour run. A package that dies
+      # at minute 200 lands in the discarded middle, and the tail then shows
+      # unrelated successful packages - so the run is unreadable and the fix has
+      # to be guessed at instead of read. The file is a few tens of MB
+      # uncompressed, well within artifact limits.
+      - name: Upload full build log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log
+          path: build.log
+          if-no-files-found: warn
+          retention-days: 7
+
       # Artifacts and the job log both need API auth to read, which makes a
       # failed run impossible to diagnose from outside the web UI. On failure
-      # the log tail goes to a `ci-log` branch, which plain `git fetch` reads.
+      # the full log also goes to a `ci-log` branch, which plain `git fetch`
+      # reads. It is gzipped: a 100 MB log pushed raw makes every subsequent
+      # `git fetch` of that branch slow, and this branch is re-pointed on each
+      # failed run. The artifact above is the unmodified file.
       - name: Publish build log to ci-log branch
         if: failure()
         env:
@@ -136,17 +156,13 @@ jobs:
         run: |
           mkdir -p /tmp/cl
           if [ -f build.log ]; then
-            # The head matters as much as the tail: the prepare stage (feeds
-            # install, feed patches, `nss patch <pkg>: <file>`, defconfig
-            # verification) only runs in the first few hundred lines, and a
-            # build that dies at minute 200 used to hide it completely. That is
-            # what made it impossible to tell whether 0121-nss-drv had been
-            # applied or silently skipped.
-            head -c 400000 build.log > /tmp/cl/build-head.log
-            tail -c 400000 build.log > /tmp/cl/build-tail.log
+            gzip -9 -c build.log > /tmp/cl/build.log.gz
           else
-            echo "(no build.log produced)" > /tmp/cl/build-tail.log
+            # A failure before build.sh ever ran (checkout, disk, deps) leaves
+            # no build.log at all; say so rather than pushing an empty branch.
+            echo "(no build.log produced)" | gzip -9 > /tmp/cl/build.log.gz
           fi
+          ls -l /tmp/cl/build.log.gz
           cd /tmp/cl
           git init -q .
           git config user.email "ci@localhost"
