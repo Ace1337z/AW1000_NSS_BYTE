@@ -10,3 +10,7 @@
 *.swp
 *~
 .DS_Store
+
+# Agent tooling: kept on disk for local use, deliberately not in the repo.
+/AGENTS.md
+/.opencode/
