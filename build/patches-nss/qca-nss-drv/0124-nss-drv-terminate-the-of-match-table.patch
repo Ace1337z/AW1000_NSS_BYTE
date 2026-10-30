@@ -1,0 +1,49 @@
+From: AW1000_NSS_BYTE
+Subject: [PATCH] nss-drv: restore the {} terminator on nss_dt_ids[]
+
+nss_init.c builds its of_device_id table with NSS_DT_SUPPORT=1 on every
+kernel newer than 3.4, which is the only configuration this image uses:
+
+    struct of_device_id nss_dt_ids[] = {
+        { .compatible = "qcom,nss" },
+        { .compatible = "qcom,nss0" },
+        { .compatible = "qcom,nss1" },
+    };
+
+An of_device_id table must end with an empty entry. modpost checks this and
+treats a missing one as an ERROR, not a warning:
+
+    ERROR: modpost: qca-nss-drv: nss_dt_ids[] is not terminated with a NULL entry
+
+The terminator was there in the original source. The 6.12 support patch
+(0026-nss-drv-add-support-for-kernel-6.12.patch) removes it in a hunk of its
+own, for no stated reason and with no warning that requires it:
+
+    @@ -136,7 +143,6 @@ struct of_device_id nss_dt_ids[] = {
+        { .compatible = "qcom,nss1" },
+    -   {},
+     };
+
+That deletion is why modpost fails. Put the entry back.
+
+This is the third failure in the chain, and the first one that happens after
+compiling rather than during it. CI has not seen it: run #18 stopped at
+nss_coredump.c, the fourth object out of about two hundred, so the build never
+reached modpost.
+
+Verified locally: with the entry restored the modpost error is gone from the
+driver's own symbols (the remaining unresolved-symbol warnings in a local build
+are every core kernel function, because modules_prepare produces no
+Module.symvers; CI builds a real one).
+--- a/nss_init.c
++++ b/nss_init.c
+@@ -142,8 +142,9 @@
+ struct of_device_id nss_dt_ids[] = {
+ 	{ .compatible = "qcom,nss" },
+ 	{ .compatible = "qcom,nss0" },
+ 	{ .compatible = "qcom,nss1" },
++	{},
+ };
+ MODULE_DEVICE_TABLE(of, nss_dt_ids);
+ #endif
+ 

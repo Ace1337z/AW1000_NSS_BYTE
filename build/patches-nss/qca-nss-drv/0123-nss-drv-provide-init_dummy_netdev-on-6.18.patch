@@ -1,0 +1,66 @@
+From: AW1000_NSS_BYTE
+Subject: [PATCH] nss-drv: provide init_dummy_netdev() on kernel 6.18
+
+The driver calls init_dummy_netdev() on the net_device it hands to napi/irq
+registration:
+
+    nss_hal/nss_hal.c:363:  init_dummy_netdev(&nss_ctx->napi_ndev);
+
+That was an exported symbol when the driver was written. In 6.18 it is a
+static helper inside net/core/dev.c with no EXPORT_SYMBOL and no prototype in
+any header, so the call is an implicit declaration and the module does not
+build:
+
+    nss_hal/nss_hal.c:363:9: error: implicit declaration of function
+        'init_dummy_netdev' [-Wimplicit-function-declaration]
+
+This is not a warning and no -W flag can suppress it: there is no symbol to
+link against. -Werror is irrelevant here.
+
+Provide the equivalent locally, version-gated so older kernels keep the real
+symbol. The body is the 6.18 helper verbatim (net/core/dev.c:11372): mark the
+device as a dummy so it never reaches register/unregister, and mark it present
+and started. Those are the only things the driver depends on - it uses the
+netdev only as a napi/irq carrier and never registers it.
+
+It has to live in nss_hal/include/nss_hal.h, not in compat.h. The driver
+force-includes compat.h with -include, so it is read before
+<linux/netdevice.h> defines struct net_device; putting the shim there fails
+with "invalid use of undefined type 'struct net_device'" and "'NETREG_DUMMY'
+undeclared". nss_hal.h includes nss_core.h, which includes <linux/netdevice.h>.
+
+Verified by compiling the driver against 6.18 headers with
+aarch64-linux-gnu-gcc: with this applied the call resolves and this is the only
+error in the tree that is not a missing sibling header (qca-ssdk, qca-nss-dp,
+which OpenWrt stages and a bare local build does not have).
+
+--- a/nss_hal/include/nss_hal.h
++++ b/nss_hal/include/nss_hal.h
+@@ -130,6 +130,27 @@
+ 
+ /*
+  * nss_hal_dt_parse_features()
+  */
+ void nss_hal_dt_parse_features(struct device_node *np, struct nss_platform_data *npd);
++/*
++ * init_dummy_netdev() stopped being exported in 6.18: net/core/dev.c now
++ * defines it static, with no EXPORT_SYMBOL and no prototype in netdevice.h.
++ * nss_hal.c calls it on the net_device that only carries napi/irq
++ * registration - it is never registered and never used as an interface, so
++ * only these three fields matter.
++ *
++ * This is a link-time break, not a diagnostic: no -W flag can affect it.
++ * It lives here rather than in compat.h because compat.h is force-included
++ * with -include, before <linux/netdevice.h> has defined struct net_device.
++ */
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 18, 0)
++static inline void nss_compat_init_dummy_netdev(struct net_device *dev)
++{
++	dev->reg_state = NETREG_DUMMY;
++	set_bit(__LINK_STATE_PRESENT, &dev->state);
++	set_bit(__LINK_STATE_START, &dev->state);
++}
++#define init_dummy_netdev nss_compat_init_dummy_netdev
++#endif
++
+ #endif /* __NSS_HAL_H */
