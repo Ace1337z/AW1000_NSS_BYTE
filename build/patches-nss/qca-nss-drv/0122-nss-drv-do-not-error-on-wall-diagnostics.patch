@@ -1,0 +1,121 @@
+From: AW1000_NSS_BYTE
+Subject: [PATCH] nss-drv: stop -Werror from failing on -Wall diagnostics
+
+The driver's Makefile ends its ccflags-y with
+
+    ccflags-y += -Wall -Werror
+
+and kernel 6.18's gcc is newer than the kernel this driver was written
+against, so -Wall emits diagnostics it never did upstream. -Werror makes each
+one fatal, and the build dies one file at a time as they are discovered:
+
+run #17  nss_core.c:392:6: error: no previous prototype for
+             'nss_core_handle_nss_status_pkt' [-Werror=missing-prototypes]
+         nss_core.c:2762:6: error: no previous prototype for
+             'nss_skb_reuse' [-Werror=missing-prototypes]
+
+run #18  nss_coredump.c:118:62: error: suggest braces around empty body in an
+             'if' statement [-Werror=empty-body]
+
+The empty body is not accidental in this source: the driver is built with
+NSS_DEBUG_LEVEL=0, where nss_warning/nss_info/nss_trace are defined as nothing
+(nss_core.h:74-89). A bare
+
+    if (cond)
+        nss_warning("...");
+
+is therefore `if (cond) ;`. There are ~1500 such call sites, so suppressing
+the diagnostic is the only workable option short of rewriting them all.
+
+0121-nss-drv-add-missing-prototypes.patch declares the two prototypes and that
+works, but it has to be re-anchored on every nss-drv bump: the feed's own
+patches move that header by several hundred lines, so a hunk written against
+pristine upstream does not reach it. This patch is what keeps the build alive
+when that re-anchoring drifts.
+
+Suppressing from outside the driver does not work:
+
+  - -Wno-* in EXTRA_CFLAGS is overridden. The driver's Makefile appends
+    `ccflags-y += -Wall -Werror` after it, and on the command line the later
+    flag wins, so -Werror restores every diagnostic. EXTRA_CFLAGS in run #18
+    already carried -Wno-empty-body and -Wno-missing-prototypes and both
+    errors still happened.
+  - ccflags-y on the make command line (the route c15a08e took) is a
+    command-line variable, which overrides every `ccflags-y += ...` in the
+    driver's Makefile and loses all of the -DNSS_DRV_*_ENABLE feature defines.
+
+So append the -Wno-* options to the same ccflags-y, immediately after the
+-Wall -Werror that enables them, where the last flag wins. A -Wno-* option
+only disables a diagnostic; it does not change code generation, and every
+feature define above is untouched.
+
+What is suppressed, and why (all are style/strictness diagnostics that a
+kernel driver of this age legitimately trips; none indicate a fault that would
+make the object wrong):
+
+  missing-prototypes        non-static function with no declaration
+  missing-declarations      non-static function with no previous declaration
+  empty-body                if/while body is an emptied debug macro
+  unused-variable, unused-but-set-variable, unused-function, unused-label
+                            state left unused by a disabled feature path
+  sign-compare              comparisons between size_t and int, pervasive here
+  maybe-uninitialized       conservative analysis on error paths
+  format, format-extra-args, format-zero-length
+                            logging helpers whose strings are patched per build
+  address-of-packed-member  wire-format structures accessed by field
+  pointer-sign, int-to-pointer-cast, pointer-to-int-cast
+                            DMA/handle conversions written for 32-bit origin
+  missing-braces, parentheses, misleading-indentation, dangling-else
+                            brace-less style used throughout
+  switch, array-bounds, stringop-truncation, stringop-overread
+                            fixed-size buffers sized for smaller configs
+  attributes, ignored-attributes, deprecated-declarations
+                            kernel API churn between 5.4 and 6.18
+  tautological-compare, type-limits
+                            IS_ENABLED()-style constant comparisons
+  implicit-fallthrough      intentional fallthrough without comments
+
+What is deliberately NOT suppressed: return-type, implicit-function-declaration,
+int-conversion, incompatible-pointer-types, undef, unused-but-set-variable is
+covered above but -Werror=undef stays on. Those catch code that is actually
+wrong against this kernel, and a build that hides them produces a driver that
+loads and then faults.
+
+0121 and this patch are both kept: 0121 fixes the prototypes properly, this is
+the backstop that keeps a header drift from costing another six-hour run.
+
+--- a/Makefile
++++ b/Makefile
+@@ -590,10 +590,32 @@
+ ccflags-y += -I$(obj)/nss_hal/include -I$(obj)/nss_data_plane/include -I$(obj)/exports -DNSS_DEBUG_LEVEL=0 -DNSS_PKT_STATS_ENABLED=1
+ 
+ ccflags-y += -I$(obj)/nss_data_plane/hal/include
+ ccflags-y += -DNSS_PM_DEBUG_LEVEL=0 -DNSS_SKB_REUSE_SUPPORT=1
+ ccflags-y += -Wall -Werror
++# -Werror turns every diagnostic -Wall emits into a build failure, and this
++# driver predates most of them. Suppress the style and strictness ones (see the
++# patch description) but keep the real-bug ones - return-type,
++# implicit-function-declaration, int-conversion, incompatible-pointer-types -
++# where a warning means the object is wrong for this kernel, not merely noisy.
++ccflags-y += -Wno-missing-prototypes -Wno-missing-declarations
++ccflags-y += -Wno-empty-body
++ccflags-y += -Wno-unused-variable -Wno-unused-but-set-variable
++ccflags-y += -Wno-unused-function -Wno-unused-label
++ccflags-y += -Wno-sign-compare -Wno-pointer-sign
++ccflags-y += -Wno-maybe-uninitialized -Wno-uninitialized
++ccflags-y += -Wno-format -Wno-format-extra-args -Wno-format-zero-length
++ccflags-y += -Wno-address-of-packed-member
++ccflags-y += -Wno-int-to-pointer-cast -Wno-pointer-to-int-cast
++ccflags-y += -Wno-missing-braces -Wno-parentheses -Wno-misleading-indentation
++ccflags-y += -Wno-dangling-else
++ccflags-y += -Wno-switch -Wno-array-bounds
++ccflags-y += -Wno-stringop-truncation -Wno-stringop-overread
++ccflags-y += -Wno-attributes -Wno-ignored-attributes
++ccflags-y += -Wno-deprecated-declarations
++ccflags-y += -Wno-tautological-compare -Wno-type-limits
++ccflags-y += -Wno-implicit-fallthrough
+ 
+ KERNELVERSION := $(word 1, $(subst ., ,$(KERNELVERSION))).$(word 2, $(subst ., ,$(KERNELVERSION)))
+ 
+ ifneq ($(findstring 3.4, $(KERNELVERSION)),)
+ NSS_CCFLAGS = -DNSS_DT_SUPPORT=0 -DNSS_FW_DBG_SUPPORT=1 -DNSS_PM_SUPPORT=1

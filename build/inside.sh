@@ -202,6 +202,8 @@ if compgen -G "$FEED/build/patches-nss/*/*.patch" >/dev/null; then
 		die "qca-nss-drv is missing from feeds/nss after the nss-copy step"
 	grep -q 'nss_skb_reuse' feeds/nss/qca-nss-drv/patches/0121-*.patch 2>/dev/null ||
 		die "qca-nss-drv: 0121 missing-prototypes fix is not in patches/, which is the PATCH_DIR for the pinned 12.5 firmware"
+	grep -q 'Wno-empty-body' feeds/nss/qca-nss-drv/patches/0122-*.patch 2>/dev/null ||
+		die "qca-nss-drv: 0122 -Werror suppression is not in patches/; the driver fails on empty-body and missing-prototypes"
 	# Re-link the already-installed nss package dirs at the copy rather than
 	# the original, so the patched sources are what gets built. Only packages
 	# that are already installed are re-linked - `feeds install -a -p nss`
