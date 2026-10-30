@@ -19,18 +19,20 @@ ccflags-y given on the make command line is a command-line variable, which
 overrides every `ccflags-y += ...` in the driver's own Makefile. The build then
 loses all of its -DNSS_DRV_*_ENABLE feature defines.
 
-Declare the two functions in nss_core.h next to the other "APIs provided by
-nss_core.c" entries. That satisfies the warning and leaves the driver's own
-warning flags and feature defines untouched.
+Declare the two functions in nss_core.h, anchored on
+nss_core_init_handlers() rather than a line number: the nss feed's own patches
+insert several hundred lines above that point, so a hunk written against
+pristine upstream (where it was line 951) does not reach it here.
+
+The context is kept deliberately short. GNU patch 2.8.1, which the build image
+ships, fails to match a hunk of this size when the surrounding context lines
+are the long prototypes in this header; a three-line hunk matches cleanly.
 
 --- a/nss_core.h
 +++ b/nss_core.h
-@@ -951,6 +951,8 @@
- extern uint32_t nss_core_register_handler(struct nss_ctx_instance *nss_ctx, uint32_t interface, nss_core_rx_callback_t cb, void *app_data);
- extern uint32_t nss_core_unregister_handler(struct nss_ctx_instance *nss_ctx, uint32_t interface);
+@@ -997,3 +997,5 @@
  extern void nss_core_init_handlers(struct nss_ctx_instance *nss_ctx);
 +extern void nss_core_handle_nss_status_pkt(struct nss_ctx_instance *nss_ctx, struct sk_buff *nbuf);
 +extern void nss_skb_reuse(struct sk_buff *nbuf);
  void nss_core_update_max_ipv4_conn(int conn);
  void nss_core_update_max_ipv6_conn(int conn);
- extern void nss_core_register_subsys_dp(struct nss_ctx_instance *nss_ctx, uint32_t if_num,

@@ -136,6 +136,13 @@ jobs:
         run: |
           mkdir -p /tmp/cl
           if [ -f build.log ]; then
+            # The head matters as much as the tail: the prepare stage (feeds
+            # install, feed patches, `nss patch <pkg>: <file>`, defconfig
+            # verification) only runs in the first few hundred lines, and a
+            # build that dies at minute 200 used to hide it completely. That is
+            # what made it impossible to tell whether 0121-nss-drv had been
+            # applied or silently skipped.
+            head -c 400000 build.log > /tmp/cl/build-head.log
             tail -c 400000 build.log > /tmp/cl/build-tail.log
           else
             echo "(no build.log produced)" > /tmp/cl/build-tail.log

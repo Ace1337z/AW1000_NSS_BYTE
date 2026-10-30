@@ -163,7 +163,24 @@ if compgen -G "$FEED/build/patches-nss/*/*.patch" >/dev/null; then
 		pkg="$(basename "$(dirname "$p")")"
 		log "nss patch $pkg: $(basename "$p")"
 		cp "$p" "feeds/nss/$pkg/patches/"
+		# cp can fail silently for a package that is not in the feed (a typo in
+		# build/patches-nss/<pkg> leaves an empty directory behind), and the
+		# build then compiles unpatched sources. That is how a fix can appear
+		# to be in the tree while the compiler never sees it.
+		[ -f "feeds/nss/$pkg/patches/$(basename "$p")" ] ||
+			die "nss patch $pkg/$(basename "$p") was not copied: no such package in the nss feed"
 	done
+	# The driver sources are fetched into the build dir at compile time and do
+	# not exist yet, so there is no patched nss_core.h to inspect here. Assert
+	# the fix is in the directory the driver's Makefile actually reads instead:
+	# PATCH_DIR defaults to patches/ for the 12.5 firmware this image pins (the
+	# patches-11.4 override only applies to CONFIG_NSS_FIRMWARE_VERSION_11_4).
+	# Without the fix the kernel's -Werror turns two missing prototypes in
+	# nss_core.c into a hard error 200 minutes into the build.
+	if [ -d feeds/nss/qca-nss-drv ]; then
+		grep -q 'nss_skb_reuse' feeds/nss/qca-nss-drv/patches/0121-*.patch 2>/dev/null ||
+			die "qca-nss-drv: 0121 missing-prototypes fix is not in patches/, which is the PATCH_DIR for the pinned 12.5 firmware"
+	fi
 	# Re-link the already-installed nss package dirs at the copy rather than
 	# the original, so the patched sources are what gets built. Only packages
 	# that are already installed are re-linked - `feeds install -a -p nss`
