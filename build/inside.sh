@@ -126,6 +126,22 @@ for pkg in $(grep -vE '^\s*(#|$)' "$FEED/build/feeds.exclude"); do
 	rm -f "package/feeds/$pkg"
 done
 
+# A source package must resolve from one feed only. The aw1000 feed is this
+# checkout and $WORK lives inside it, so feeds update also indexes
+# aw1000-feed/work/nss-packages/*: without the pin in build/feeds.prefer and the
+# matching entry in build/feeds.exclude, a package such as qca-nss-drv exists
+# twice and `feeds install` silently takes the aw1000 copy - which is not the
+# one build/patches-nss patches. That cost two five-hour runs (CI #16, #17)
+# before it was visible. Catch it here, in seconds.
+for pkgdir in package/feeds/*/qca-nss-drv; do
+	[ -e "$pkgdir" ] || continue
+	echo "  qca-nss-drv from: $pkgdir -> $(readlink -f "$pkgdir" 2>/dev/null)" >&2
+done
+nsrc=$(ls -d package/feeds/*/qca-nss-drv 2>/dev/null | wc -l)
+if [ "$nsrc" -gt 1 ]; then
+	die "qca-nss-drv is installed from $nsrc feeds; only the nss feed's copy is patched (see build/feeds.prefer)"
+fi
+
 # -------------------------------------------------------------- 2. patches
 # <dir>/<feed>/*.patch, paths relative to the feed root.
 apply_patches() {

@@ -3,8 +3,22 @@
 # whose package depends on one installs it from the earliest feed in
 # feeds.conf.
 #
-# Currently EMPTY, and that is deliberate.
+# Not currently empty: qca-nss-drv is pinned to the nss feed below.
+
+# qca-nss-drv must come from the nss feed, not from the aw1000 feed.
 #
+# The aw1000 feed points at this checkout, and $WORK lives inside it
+# (build.sh sets WORK="${WORK:-$REPO/work}"), so `feeds update -a` also scans
+# aw1000-feed/work/nss-packages/ and registers a second source directory named
+# qca-nss-drv. The aw1000 feed is listed first in build/feeds, so a plain
+# `feeds install qca-nss-drv` picks that one - the unmodified checkout.
+#
+# build/inside.sh patches $WORK/nss-copy (reached as feeds/nss), so the patched
+# driver is only ever the nss feed's copy. Pinning it here is what makes that
+# the one that gets installed, and build/feeds.exclude drops the aw1000 copy so
+# it cannot come back.
+nss/qca-nss-drv
+
 # This used to pin luci_smstool/sms-tool (4IceG's 2026-08 build) so that
 # byte/files/etc/rc.local and luci-app-modeminfo had a /usr/bin/sms_tool to
 # shell out to. QModem now owns the modem stack and ships sms-tool_q as a

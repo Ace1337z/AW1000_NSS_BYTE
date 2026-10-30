@@ -74,3 +74,20 @@ qmodem/simcom_QMI_WWAN
 qmodem/quectel_QMI_WWAN
 qmodem/quectel_QMI_WWAN_nss
 qmodem/rmnet-nss
+
+# The aw1000 feed is this checkout, and $WORK lives inside it (build.sh sets
+# WORK="${WORK:-$REPO/work}"). `feeds update -a` therefore scans
+# aw1000-feed/work/nss-packages/ as well, which registers a *second* source
+# directory for every nss package, pointing at the unmodified nss-packages
+# checkout rather than at the patched copy in $WORK/nss-copy.
+#
+# qca-nss-drv was the one that mattered: make built
+# work/nss-packages/qca-nss-drv (the aw1000 copy) while build/inside.sh
+# patched feeds/nss/qca-nss-drv (the copy), so 0121 and 0122 were applied to a
+# tree nothing compiled. The driver then failed on two missing prototypes in
+# nss_core.c under kernel 6.18's -Werror, four hours into the build, in both
+# run #16 and run #17.
+#
+# Excluding the aw1000 copy leaves the nss feed as the only source for these,
+# which is the one that gets patched.
+aw1000/qca-nss-drv
