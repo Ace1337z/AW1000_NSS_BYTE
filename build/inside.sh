@@ -56,7 +56,8 @@ rm -rf package/feeds
 custom="$(grep -vE '^\s*(#|$)' "$FEED/build/feeds" | awk '{print $2}')"
 for pref in $(grep -vE '^\s*(#|$)' "$FEED/build/feeds.prefer"); do
 	log "install ${pref#*/} from ${pref%%/*}"
-	./scripts/feeds install -p "${pref%%/*}" "${pref#*/}"
+	./scripts/feeds install -p "${pref%%/*}" "${pref#*/}" ||
+		die "could not install ${pref#*/} from the ${pref%%/*} feed (see build/feeds.prefer)"
 done
 # The custom feeds are NOT installed with -a: `feeds install -a -p <feed>`
 # installs every package in the feed, and several of them start Kconfig
