@@ -137,8 +137,8 @@ for pkgdir in package/feeds/*/qca-nss-drv; do
 	[ -e "$pkgdir" ] || continue
 	echo "  qca-nss-drv from: $pkgdir -> $(readlink -f "$pkgdir" 2>/dev/null)" >&2
 done
-nsrc=$(ls -d package/feeds/*/qca-nss-drv 2>/dev/null | wc -l)
-if [ "$nsrc" -gt 1 ]; then
+nsrc=$(ls -d package/feeds/*/qca-nss-drv 2>/dev/null | wc -l || true)
+if [ "${nsrc:-0}" -gt 1 ]; then
 	die "qca-nss-drv is installed from $nsrc feeds; only the nss feed's copy is patched (see build/feeds.prefer)"
 fi
 
