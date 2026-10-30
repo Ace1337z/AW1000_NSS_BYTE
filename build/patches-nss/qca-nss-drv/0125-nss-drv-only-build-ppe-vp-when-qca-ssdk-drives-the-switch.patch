@@ -1,0 +1,67 @@
+From: AW1000_NSS_BYTE
+Subject: [PATCH] nss-drv: only build PPE virtual ports when qca-ssdk owns the switch
+
+nss_ppe_vp.c is the only file in the driver that depends on qca-ssdk: it
+includes <ref/ref_vsi.h> and calls ppe_vsi_alloc(NSS_PPE_VP_SWITCH_ID, ...)
+and ppe_vsi_free(...). Those are declared in qca-ssdk and exported by
+qca-ssdk.ko, and 0 is the switch id qca-ssdk registers when it probes.
+
+This image does not build qca-ssdk and has no qcom,ess-switch* node in its
+device tree, so ssdk_ks_km.ko never probes, switch id 0 is never registered,
+and nss_ppe_vp_create() -> ppe_vsi_alloc() cannot succeed at runtime. Adding
+qca-ssdk to make this file compile would therefore produce a module that
+loads but whose virtual-port path always fails.
+
+The PPE data path this image actually uses is the in-kernel qca_ppe driver,
+reached through qca_ppe_port_fw_vsi_get() (EXPORT_SYMBOL_GPL) by the
+qca-ppe-nss glue. That path is unaffected: nss_ppe.o, nss_ppe_register_handler()
+and the qcom,ppe-enabled handling in nss_hal.c all stay compiled.
+
+So gate the virtual-port objects behind NSS_DRV_PPE_VP_ENABLE. It defaults to
+off, which keeps nss_ppe_vp*.o out and leaves the driver with no unresolved
+qca-ssdk symbol at all. Set NSS_DRV_PPE_VP_ENABLE=y to restore them on a board
+where qca-ssdk is in the image and bound to the switch.
+
+--- a/Makefile
++++ b/Makefile
+@@ -426,14 +426,24 @@
+ 					nss_ppe.o \
+ 					nss_ppe_log.o \
+ 					nss_ppe_stats.o \
+-					nss_ppe_strings.o \
+-					nss_ppe_vp.o \
+-					nss_ppe_vp_log.o \
+-					nss_ppe_vp_stats.o
++					nss_ppe_strings.o
+ 
+ ccflags-y += -DNSS_DRV_PPE_ENABLE
+ ccflags-y += -DNSS_DRV_EDMA_ENABLE
+ 
++# PPE virtual ports are driven through qca-ssdk's ppe_vsi_alloc()/ppe_vsi_free(),
++# which only exist when the board's switch is owned by qca-ssdk (i.e. the device
++# tree has a qcom,ess-switch* node). Boards whose PPE is driven by the in-kernel
++# qca_ppe driver have no such node, so ssdk_ks_km.ko never probes, dev_id 0 is
++# never registered and nss_ppe_vp_create() would fail at runtime. Leave this
++# disabled unless qca-ssdk is actually in the image and bound to the switch.
++ifeq "$(NSS_DRV_PPE_VP_ENABLE)" "y"
++ccflags-y += -DNSS_DRV_PPE_VP_ENABLE
++qca-nss-drv-objs += nss_ppe_vp.o \
++					nss_ppe_vp_log.o \
++					nss_ppe_vp_stats.o
++endif
++
+ ifneq "$(NSS_DRV_IPSEC_ENABLE)" "n"
+ ccflags-y += -DNSS_DRV_IPSEC_ENABLE
+ qca-nss-drv-objs += \
+--- a/nss_hal/nss_hal.c
++++ b/nss_hal/nss_hal.c
+@@ -493,7 +493,9 @@
+ 	if (npd->ppe_enabled == NSS_FEATURE_ENABLED) {
+ 		nss_top->ppe_handler_id = nss_dev->id;
+ 		nss_ppe_register_handler();
++#ifdef NSS_DRV_PPE_VP_ENABLE
+ 		nss_ppe_vp_register_handler();
++#endif
+ 	}
+ #endif
+ 

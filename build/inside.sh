@@ -216,18 +216,29 @@ if compgen -G "$FEED/build/patches-nss/*/*.patch" >/dev/null; then
 	grep -q 'nss_dt_ids\[\] = {' feeds/nss/qca-nss-drv/patches/0124-*.patch 2>/dev/null &&
 		grep -q '^+	{},$' feeds/nss/qca-nss-drv/patches/0124-*.patch ||
 		die "qca-nss-drv: 0124 of_match_table terminator is not in patches/; modpost fails with 'nss_dt_ids[] is not terminated with a NULL entry'"
+	# 0125 is what removes the driver's only dependency on qca-ssdk: nss_ppe_vp.c
+	# includes <ref/ref_vsi.h> and calls ppe_vsi_alloc()/ppe_vsi_free(), which
+	# only exist in qca-ssdk. It is not merely a build problem. This image has no
+	# qcom,ess-switch* node, so ssdk_ks_km.ko never probes, switch id 0 is never
+	# registered, and nss_ppe_vp_create() could never succeed even if the file
+	# compiled. 0125 gates those objects behind NSS_DRV_PPE_VP_ENABLE (default
+	# off), so the module loads with no unresolved qca-ssdk symbol at all. The
+	# PPE data path this image really uses - in-kernel qca_ppe via
+	# qca_ppe_port_fw_vsi_get() - is untouched.
+	grep -q 'NSS_DRV_PPE_VP_ENABLE' feeds/nss/qca-nss-drv/patches/0125-*.patch 2>/dev/null ||
+		die "qca-nss-drv: 0125 qca-ssdk gating is not in patches/; nss_ppe_vp.c needs <ref/ref_vsi.h> from qca-ssdk, which this image does not build"
 	# 0124 cannot go through patches/ the way the others do: patches/ is the
 	# driver *source* patch dir (PATCH_DIR), and 0124 changes the package's own
 	# Makefile so the compiler is handed the directory the qca-ppe-nss package
-	# installs nss_dp_api_if.h into. Without it, nss_phys_if.c and nss_ppe_vp.c
-	# cannot find their headers and the module does not build - the failure that
-	# was hiding behind run #18's empty-body error, since the object list builds
+	# installs nss_dp_api_if.h into. Without it, nss_phys_if.c cannot find
+	# nss_dp_api_if.h and the module does not build - the failure that was hiding
+	# behind run #18's empty-body error, since the object list builds
 	# nss_coredump.o first and make stops at the first error.
 	pkg_mk="feeds/nss/qca-nss-drv/Makefile"
 	grep -q 'usr/include/qca-ppe-nss' "$pkg_mk" ||
 		sed -i 's#^\(\s*\)-I$(STAGING_DIR)/usr/include/qca-ssdk \\$#&\n\1-I$(STAGING_DIR)/usr/include/qca-ppe-nss \\#' "$pkg_mk"
 	grep -q 'usr/include/qca-ppe-nss' "$pkg_mk" ||
-		die "qca-nss-drv: could not add the qca-ppe-nss include path to $pkg_mk; nss_phys_if.c and nss_ppe_vp.c will not find nss_dp_api_if.h"
+		die "qca-nss-drv: could not add the qca-ppe-nss include path to $pkg_mk; nss_phys_if.c will not find nss_dp_api_if.h"
 	# Re-link the already-installed nss package dirs at the copy rather than
 	# the original, so the patched sources are what gets built. Only packages
 	# that are already installed are re-linked - `feeds install -a -p nss`
