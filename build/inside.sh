@@ -133,9 +133,13 @@ done
 # twice and `feeds install` silently takes the aw1000 copy - which is not the
 # one build/patches-nss patches. That cost two five-hour runs (CI #16, #17)
 # before it was visible. Catch it here, in seconds.
+#
+# This only checks that the package came from exactly one feed. The re-link
+# below happens after it, so whether the surviving copy is the patched one is
+# asserted again afterwards, against the final state.
 for pkgdir in package/feeds/*/qca-nss-drv; do
 	[ -e "$pkgdir" ] || continue
-	echo "  qca-nss-drv from: $pkgdir -> $(readlink -f "$pkgdir" 2>/dev/null)" >&2
+	echo "  qca-nss-drv from: $pkgdir" >&2
 done
 nsrc=$(ls -d package/feeds/*/qca-nss-drv 2>/dev/null | wc -l || true)
 if [ "${nsrc:-0}" -gt 1 ]; then
@@ -193,10 +197,10 @@ if compgen -G "$FEED/build/patches-nss/*/*.patch" >/dev/null; then
 	# patches-11.4 override only applies to CONFIG_NSS_FIRMWARE_VERSION_11_4).
 	# Without the fix the kernel's -Werror turns two missing prototypes in
 	# nss_core.c into a hard error 200 minutes into the build.
-	if [ -d feeds/nss/qca-nss-drv ]; then
-		grep -q 'nss_skb_reuse' feeds/nss/qca-nss-drv/patches/0121-*.patch 2>/dev/null ||
-			die "qca-nss-drv: 0121 missing-prototypes fix is not in patches/, which is the PATCH_DIR for the pinned 12.5 firmware"
-	fi
+	[ -d feeds/nss/qca-nss-drv ] ||
+		die "qca-nss-drv is missing from feeds/nss after the nss-copy step"
+	grep -q 'nss_skb_reuse' feeds/nss/qca-nss-drv/patches/0121-*.patch 2>/dev/null ||
+		die "qca-nss-drv: 0121 missing-prototypes fix is not in patches/, which is the PATCH_DIR for the pinned 12.5 firmware"
 	# Re-link the already-installed nss package dirs at the copy rather than
 	# the original, so the patched sources are what gets built. Only packages
 	# that are already installed are re-linked - `feeds install -a -p nss`
@@ -207,6 +211,22 @@ if compgen -G "$FEED/build/patches-nss/*/*.patch" >/dev/null; then
 		rm -f "$d"
 		ln -s "../../../feeds/nss/$name" "$d"
 	done
+	# The re-link is what makes the patched sources the ones that get built, so
+	# assert it held rather than trusting the loop. If package/feeds/nss/
+	# qca-nss-drv resolves anywhere other than $WORK/nss-copy, make compiles a
+	# tree with none of the patches in build/patches-nss applied - which is
+	# exactly what runs #16 and #17 did, for five hours each, while the log
+	# showed the patches being "applied" to a copy nothing built.
+	# This is the 12.5 path only, and build/config asks for this package, so it
+	# must be installed. If it is not, defconfig would drop the request below
+	# (config verification would then fail, but only after another defconfig
+	# run) - or worse, the image would build without the NSS data path.
+	[ -d package/feeds/nss/qca-nss-drv ] ||
+		die "qca-nss-drv was not installed from the nss feed; check the pin in build/feeds.prefer"
+	drv_src="$(readlink -f package/feeds/nss/qca-nss-drv 2>/dev/null || true)"
+	want_src="$(readlink -f "$WORK/nss-copy/qca-nss-drv" 2>/dev/null || true)"
+	[ "$drv_src" = "$want_src" ] ||
+		die "qca-nss-drv builds from '$drv_src' but the patches are in '$want_src'; make would compile unpatched sources"
 fi
 
 # Patches to the OpenWrt tree itself (build/patches-openwrt/*.patch, -p1).
