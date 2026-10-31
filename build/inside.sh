@@ -239,6 +239,41 @@ if compgen -G "$FEED/build/patches-nss/*/*.patch" >/dev/null; then
 		sed -i 's#^\(\s*\)-I$(STAGING_DIR)/usr/include/qca-ssdk \\$#&\n\1-I$(STAGING_DIR)/usr/include/qca-ppe-nss \\#' "$pkg_mk"
 	grep -q 'usr/include/qca-ppe-nss' "$pkg_mk" ||
 		die "qca-nss-drv: could not add the qca-ppe-nss include path to $pkg_mk; nss_phys_if.c will not find nss_dp_api_if.h"
+	# The include path above is only useful if something installs the header
+	# there, and that is a separate package: package/kernel/qca-ppe-nss owns
+	# nss_dp_api_if.h and stages it from its Build/InstallDev. InstallDev only
+	# runs for a prepared package, so unless qca-ppe-nss is requested in
+	# build/config it is merely downloaded and the -I above points at a
+	# directory that does not exist. That is exactly how this last run failed:
+	# the flag was present in EXTRA_CFLAGS, the header was not, and nss_phys_if.c
+	# stopped with "fatal error: nss_dp_api_if.h". Asserting on the Makefile
+	# alone passes in that state, so assert on the package being requested and
+	# on the header actually landing in staging.
+	grep -qE '^CONFIG_PACKAGE_kmod-qca-ppe-nss=y$' "$FEED/build/config" ||
+		die "build/config does not request CONFIG_PACKAGE_kmod-qca-ppe-nss=y; qca-ppe-nss would only be downloaded, Build/InstallDev would never stage nss_dp_api_if.h, and qca-nss-drv would fail to compile"
+	grep -q 'usr/include/qca-ppe-nss' "$WORK/openwrt/package/kernel/qca-ppe-nss/Makefile" 2>/dev/null ||
+		die "package/kernel/qca-ppe-nss is not in the tree; it is what provides nss_dp_api_if.h and the nss_dp_* symbols qca-nss-drv links against"
+	# Requesting the package in build/config is necessary but not sufficient on
+	# its own to order the build: it has to be a *build* dependency of the
+	# driver, or the two compile in parallel and qca-nss-drv can reach
+	# nss_phys_if.o before the glue has staged its header. OpenWrt sequences
+	# this through the DEPENDS line - include/package.mk makes a package's
+	# `compile` target depend on $(STAMP_INSTALLED) whenever it defines
+	# Build/InstallDev, and that stamp is what runs InstallDev - so the driver
+	# must name kmod-qca-ppe-nss there. The nss feed's own Makefile omits it,
+	# and the feed is re-fetched on every run, so patch it here rather than
+	# relying on an edit to work/, which is not in this repository.
+	grep -q 'kmod-qca-ppe-nss' "$pkg_mk" ||
+		sed -i 's#^\(\s*\)+TARGET_qualcommax:kmod-qca-nss-dp \\$#&\n\1+TARGET_qualcommax:kmod-qca-ppe-nss \\#' "$pkg_mk"
+	grep -q 'kmod-qca-ppe-nss' "$pkg_mk" ||
+		die "qca-nss-drv: could not add +TARGET_qualcommax:kmod-qca-ppe-nss to DEPENDS in $pkg_mk; the driver would compile in parallel with the glue that stages nss_dp_api_if.h instead of after it"
+	# The sed above must land inside DEPENDS, not in the description text: the
+	# package description already mentions nss_dp_*, so a bare grep for the
+	# string would pass with the dependency still missing. The TITLE rule has to
+	# be evaluated before the match test, or a mention on the TITLE line itself
+	# counts as being inside DEPENDS.
+	awk '/^  TITLE:=/{d=0} /^  DEPENDS:=/{d=1} d&&/kmod-qca-ppe-nss/{found=1} END{exit !found}' "$pkg_mk" ||
+		die "qca-nss-drv: kmod-qca-ppe-nss is not on the DEPENDS line in $pkg_mk (the sed matched something else)"
 	# Re-link the already-installed nss package dirs at the copy rather than
 	# the original, so the patched sources are what gets built. Only packages
 	# that are already installed are re-linked - `feeds install -a -p nss`
@@ -383,6 +418,33 @@ fi
 
 log "images"
 ls -l bin/targets/qualcommax/ipq807x/*aw1000* 2>/dev/null || true
+
+# The two pieces of the NSS data path, checked where they can actually be
+# checked. Everything static about them was verified locally before this run;
+# these are the facts only a real build produces. A green compile that ships
+# an image with qca-ppe-nss.ko missing is not a working NSS router - qca-nss-drv
+# would load with undefined nss_dp_* symbols and the fast path would never
+# attach - so fail the build rather than hand back a silently broken image.
+staging="staging_dir/target-aarch64_cortex-a53_musl"
+[[ -f "$staging/usr/include/qca-ppe-nss/nss_dp_api_if.h" ]] ||
+	die "qca-ppe-nss did not stage nss_dp_api_if.h into $staging/usr/include/qca-ppe-nss; qca-nss-drv cannot have compiled against the real header"
+for ko in qca-ppe-nss.ko qca-nss-drv.ko; do
+	found=$(find build_dir/target-aarch64_cortex-a53_musl -name "$ko" -type f 2>/dev/null | head -1)
+	[[ -n "$found" ]] || die "$ko was not built; the NSS data path is incomplete"
+	printf 'nss module: %s\n' "$found"
+done
+# qca-nss-drv calls nss_dp_override_data_plane, nss_dp_start_data_plane and
+# the rest of nss_dp_* through KBUILD_EXTRA_SYMBOLS from qca-ppe-nss, so modpost
+# resolves them at link time only if the glue is built first. Prove the glue
+# exports the entry point the driver actually calls; without it the driver
+# links and then fails to load on the router, which is the failure mode this
+# whole exercise exists to avoid.
+glue=$(find build_dir/target-aarch64_cortex-a53_musl -name qca-ppe-nss.ko -type f | head -1)
+if command -v nm >/dev/null 2>&1; then
+	nm -g --defined-only "$glue" 2>/dev/null | grep -qw nss_dp_override_data_plane ||
+		die "qca-ppe-nss.ko does not export nss_dp_override_data_plane; qca-nss-drv cannot attach the NSS fast path"
+	echo "nss glue exports nss_dp_override_data_plane"
+fi
 
 # Size report: the sysupgrade image is what gets flashed, so print it in both
 # bytes and MiB, plus the ten largest files in the rootfs. That makes a

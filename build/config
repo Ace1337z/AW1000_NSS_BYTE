@@ -94,12 +94,25 @@ CONFIG_NSS_DRV_RMNET_ENABLE=y
 CONFIG_NSS_DRV_C2C_ENABLE=y
 ## The driver itself. Nothing selects it automatically, so without this line
 ## defconfig drops it and the NSS path is never built.
-## kmod-qca-ppe-nss and nss-firmware come in as its own dependencies.
 CONFIG_PACKAGE_kmod-qca-nss-drv=y
+## The data-plane glue, and the reason it must be named here. qca-nss-drv
+## compiles nss_phys_if.c, which does `#include <nss_dp_api_if.h>` whenever
+## NSS_HAL_IPQ807x_SUPPORT is set - which it is on this SoC. That header no
+## longer comes from qca-nss-dp; it is installed into staging by
+## package/kernel/qca-ppe-nss/Build/InstallDev, and InstallDev only runs for a
+## package that is actually prepared. The driver's own DEPENDS did not list it,
+## so nothing pulled it in and it was only ever *downloaded* - the -I include
+## path existed but the directory behind it did not, and nss_phys_if.c died on
+## "fatal error: nss_dp_api_if.h" at the first file make reached. Requesting the
+## package here is what makes defconfig keep it, which in turn makes its
+## Build/InstallDev stage the header before the driver is compiled.
+## build/inside.sh asserts the staged header exists, so a repeat of that failure
+## names the missing file instead of a generic compile error.
+CONFIG_PACKAGE_kmod-qca-ppe-nss=y
 # kmod-qca-nss-dp and nss-firmware are NOT requested here: on the EDMA tree the
-# data path is the in-tree qca_ppe_nss glue (package/kernel/qca-ppe-nss, pulled
-# in by the builder), not the vendor qca-nss-dp + firmware pair. Asking for
-# them fails because neither package exists on this branch.
+# data path is the in-tree qca_ppe_nss glue requested just above, not the vendor
+# qca-nss-dp + firmware pair. Asking for them fails because neither package
+# exists on this branch.
 
 # initramfs FIT for USB boot testing (U-Boot: usbboot 0x44000000 0:4)
 CONFIG_TARGET_ROOTFS_INITRAMFS=y
