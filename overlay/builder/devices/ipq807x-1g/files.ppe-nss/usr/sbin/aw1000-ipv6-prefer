@@ -1,0 +1,38 @@
+#!/bin/sh
+# Prefer IPv4 while IPv6 is not usable; restore AAAA answers as soon as it is.
+#
+# The router always keeps IPv6 enabled and always keeps detecting it: wan6 is a
+# plain DHCPv6 client and QModem publishes the card's v6 address on its own
+# <iface>v6 interface. Only the LAN resolver is steered:
+#
+#   no v6 default route, or no non-ULA global address -> dnsmasq filter_aaaa=1
+#   a v6 default route and a global address           -> dnsmasq filter_aaaa=0
+#
+# So on an IPv4-only line clients never see AAAA records and never stall on
+# dual-stack names, and on a v6-capable line nothing is filtered. The kernel,
+# the interfaces and odhcpd are never touched, so detection keeps running.
+#
+# Exit 0 always: callers are hotplug and boot, neither should fail on this.
+[ -e /etc/aw1000/keep-aaaa ] && exit 0
+
+# ULA (fc00::/7) and link-local do not mean "IPv6 internet". A tentative or
+# DAD-failed address does not count either.
+has_v6() {
+	ip -6 route show default 2>/dev/null | grep -q '^default' || return 1
+	ip -6 addr show scope global 2>/dev/null |
+		grep 'inet6 ' |
+		grep -v 'inet6 f[cd]' |
+		grep -qv 'tentative\|dadfailed'
+}
+
+want=1
+has_v6 && want=0
+
+cur=$(uci -q get dhcp.@dnsmasq[0].filter_aaaa)
+[ "$cur" = "$want" ] && exit 0
+
+uci -q set dhcp.@dnsmasq[0].filter_aaaa="$want" || exit 0
+uci -q commit dhcp || exit 0
+/etc/init.d/dnsmasq reload >/dev/null 2>&1
+logger -t aw1000-ipv6 "filter_AAAA=$want ($([ "$want" = 1 ] && echo 'no usable IPv6, IPv4 preferred' || echo 'IPv6 up'))"
+exit 0

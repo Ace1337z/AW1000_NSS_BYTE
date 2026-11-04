@@ -1,0 +1,15 @@
+#!/bin/sh
+# Hostname: BYTE, byline in the banner.
+#
+# A DNS label cannot contain spaces, so the requested "BYTE by ACE" cannot be
+# the hostname itself: the box is reachable as `BYTE`, and the byline is what
+# the login banner and LuCI's description show. The uci marker keeps a name
+# set later from being overwritten on every sysupgrade.
+[ "$(uci -q get system.@system[0].aw1000_hostname)" = 1 ] && exit 0
+uci -q set system.@system[0].hostname='BYTE'
+uci -q set system.@system[0].description='BYTE by ACE'
+uci -q set system.@system[0].aw1000_hostname='1'
+uci -q commit system
+# uci-defaults run after base-files has already read the old name.
+echo BYTE >/proc/sys/kernel/hostname 2>/dev/null
+exit 0

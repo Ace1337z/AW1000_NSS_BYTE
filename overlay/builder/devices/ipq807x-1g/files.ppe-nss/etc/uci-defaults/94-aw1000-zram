@@ -1,0 +1,18 @@
+#!/bin/sh
+# zram swap for the AW1000's 1 GB: 512 MB compressed, zstd.
+#
+# zram-swap reads system.@system[0].zram_size_mb / zram_comp_algo and starts at
+# START=15, after /etc/init.d/boot (START=10) has run this script, so the size
+# is in place on the first boot. The marker keeps a later user change from
+# being overwritten on a settings-keeping upgrade.
+#
+# zstd is only used if the kernel advertises it; zram-swap checks
+# /sys/block/zram0/comp_algorithm and keeps the built-in default otherwise.
+[ "$(uci -q get system.@system[0].aw1000_zram)" = 1 ] && exit 0
+
+uci -q set system.@system[0].zram_size_mb='512'
+uci -q set system.@system[0].zram_comp_algo='zstd'
+uci -q set system.@system[0].aw1000_zram='1'
+uci -q commit system
+
+exit 0

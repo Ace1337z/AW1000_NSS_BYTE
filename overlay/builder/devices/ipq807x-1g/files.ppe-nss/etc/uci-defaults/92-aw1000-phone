@@ -1,0 +1,54 @@
+#!/bin/sh
+# RJ11 phone port: on, with SIP answering/placing calls through the SIM.
+#
+# fxsd refuses to start without the Skyworks Si32261 DSP patch, so
+# /etc/fxs/si3226x_patch.bin ships in this image (serial 0x05262017, the same
+# patch the stock firmware loads). fxsd loads it and then checks the modem's
+# PCM mode (AT+QDAI?): if the modem is master it switches it to slave
+# (AT+QDAI=x,1,0,4,0,<rate>,1,1) and restarts the modem, and it keeps watching
+# afterwards. Nothing here has to force that.
+#
+# SIP: qmodem-voip + qmodem-sipd + luci-app-qmodem-voip are in the image. The
+# inbound (LAN) direction is enabled with generated credentials so SIP phones
+# can call through the SIM without extra clicking; the outbound direction is
+# left disabled because it needs a provider's server/account. Dial tone,
+# ringing, DTMF, caller ID, call history, speed dial and blocked numbers are
+# fxsd/luci-app-fxs features and are configured on the Phone page.
+[ "$(uci -q get fxs.main.aw1000_phone)" = 1 ] && exit 0
+
+uci -q set fxs.main.enabled='1'
+uci -q set fxs.main.sip='1'
+uci -q set fxs.main.patch='/etc/fxs/si3226x_patch.bin'
+uci -q set fxs.main.callerid='bellcore'
+uci -q set fxs.main.callerid_timing='after'
+uci -q set fxs.main.ringback='1'
+uci -q set fxs.main.history_autodelete='0'
+uci -q set fxs.main.history_days='30'
+uci -q set fxs.main.aw1000_phone='1'
+uci -q commit fxs
+
+# LAN SIP account. Username charset is [A-Za-z0-9._-], password 8..127 chars
+# of 0x21..0x7e - the same rules qmodem-sipd enforces.
+if [ -z "$(uci -q get qmodem_sip.inbound.password)" ]; then
+	pw=$(LC_ALL=C head -c 256 /dev/urandom 2>/dev/null | LC_ALL=C tr -dc 'A-Za-z0-9_-' | cut -c1-24)
+	[ "${#pw}" -ge 8 ] || pw="Byte$(hexdump -vn8 -e '8/1 "%02x"' /dev/urandom)"
+	uci -q set qmodem_sip.inbound.username='byte'
+	uci -q set qmodem_sip.inbound.password="$pw"
+	uci -q set qmodem_sip.inbound.enabled='1'
+	uci -q set qmodem_sip.inbound.interface='lan'
+	uci -q set qmodem_sip.inbound.listen_port='5060'
+	uci -q set qmodem_sip.inbound.transport='udp_tcp'
+	uci -q set qmodem_sip.inbound.voip_enabled='1'
+	uci -q set qmodem_sip.inbound.sms_enabled='0'
+	uci -q commit qmodem_sip
+	umask 077
+	cat >/root/SIP-CREDENTIALS.txt <<EOF
+LAN SIP account (QModem voice, calls go through the SIM):
+  server   $(uci -q get network.lan.ipaddr 2>/dev/null || echo 192.168.1.1):5060
+  username byte
+  password $pw
+  transport UDP/TCP, codec PCMA/PCMU
+EOF
+fi
+
+exit 0

@@ -1,0 +1,24 @@
+#!/bin/sh
+# Root with no password, as the user asked for this image.
+#
+# base-files already ships /etc/shadow with an empty root hash, but a build or
+# a restored config can carry a password forward, so make it explicit once.
+# The uci marker lives in /etc/config/system, which survives a sysupgrade, so a
+# password set later is not wiped on the next settings-keeping upgrade; clear
+# system.@system[0].aw1000_root_blank and reboot to apply this again.
+#
+# LuCI (rpcd) accepts an empty password, and so does the OpenSSH server this
+# image ships (builder/devices/common/config selects openssh-server, dropbear
+# stays =m): etc/ssh/sshd_config.d/10-root-login.conf sets PermitRootLogin and
+# PermitEmptyPasswords, and the stock sshd_config leaves password auth on.
+# Set a password before exposing SSH anywhere untrusted.
+[ "$(uci -q get system.@system[0].aw1000_root_blank)" = 1 ] && exit 0
+
+if grep -q '^root:' /etc/shadow 2>/dev/null; then
+	sed -i -E 's/^root:[^:]*:/root::/' /etc/shadow
+fi
+
+uci -q set system.@system[0].aw1000_root_blank='1'
+uci -q commit system
+
+exit 0

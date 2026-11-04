@@ -1,0 +1,28 @@
+#!/bin/sh
+# Re-check IPv6 availability whenever an interface comes up or goes down.
+#
+# IPv6 is auto-detected and never required. When no v6 default route or global
+# address exists, dnsmasq stops answering AAAA so LAN clients use IPv4
+# immediately instead of timing out on dual-stack names; the filter is lifted
+# again once v6 appears. The decision lives in /usr/sbin/aw1000-ipv6-prefer,
+# which the boot service /etc/init.d/aw1000-ipv6 also calls.
+#
+# Opt out with `touch /etc/aw1000/keep-aaaa`.
+[ -e /etc/aw1000/keep-aaaa ] && exit 0
+
+case "$ACTION" in
+	ifup|ifupdate|ifdown|ifup-failed) ;;
+	*) exit 0 ;;
+esac
+
+# Run detached: hotplug-call serialises iface scripts and must not stall on the
+# DHCPv6/RA settle delay.
+(
+	lock=/tmp/aw1000-ipv6.lock
+	mkdir "$lock" 2>/dev/null || exit 0
+	trap 'rmdir "$lock" 2>/dev/null' EXIT
+	sleep 5
+	/usr/sbin/aw1000-ipv6-prefer
+) >/dev/null 2>&1 &
+
+exit 0

@@ -1,0 +1,19 @@
+diff --git a/luci-app-passwall2/Makefile b/luci-app-passwall2/Makefile
+index 7afd2b0..1a795f8 100644
+--- a/luci-app-passwall2/Makefile
++++ b/luci-app-passwall2/Makefile
+@@ -30,9 +30,13 @@ PKG_CONFIG_DEPENDS:= \
+ 
+ LUCI_TITLE:=LuCI support for PassWall 2
+ LUCI_PKGARCH:=all
++# Local: geoview and v2ray-geoip/v2ray-geosite are not dependencies. A VLESS
++# node needs only xray-core; the geo databases and the GeoView page are
++# optional and cost several MB. Geosite/GeoIP routing rules stay unavailable
++# until those packages are installed from the feed.
+ LUCI_DEPENDS:=+coreutils +coreutils-base64 +coreutils-nohup +curl \
+ 	+ip-full +libuci-lua +lua +luci-compat +luci-lib-jsonc +resolveip +tcping \
+-	+xray-core +geoview +v2ray-geoip +v2ray-geosite \
++	+xray-core \
+ 	+unzip \
+ 	+PACKAGE_$(PKG_NAME)_INCLUDE_IPv6_Nat:ip6tables-mod-nat
+ 

@@ -1,0 +1,17 @@
+# Pinned upstream checkouts (ci/bootstrap.sh fetches these)
+/openwrt/
+/builder/
+/src/
+
+# Build results
+/releases/
+/*.log
+/build-run.log
+/tmp/
+
+# Decoded vendor blob (shipped as si3226x_patch.bin.b64)
+/overlay/builder/devices/*/files*/etc/fxs/si3226x_patch.bin
+
+# Editor / OS noise
+*~
+.DS_Store

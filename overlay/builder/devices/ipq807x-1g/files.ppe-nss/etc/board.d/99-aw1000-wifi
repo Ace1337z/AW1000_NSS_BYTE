@@ -1,0 +1,22 @@
+# First-boot Wi-Fi for the AW1000: an open "BYTE" network on 2.4 and 5 GHz.
+#
+# Only read when /etc/board.json is built (preinit, /bin/board_detect), and the
+# values land in board.json's wlan.defaults, which /lib/wifi/mac80211.uc uses
+# the first time it writes /etc/config/wireless (ieee80211 hotplug ->
+# /sbin/wifi config). Later runs skip radios that already exist, so a
+# user-changed SSID or key is never overwritten.
+#
+# A country is required: mac80211.uc disables every non-2.4 GHz AP when
+# wlan.defaults.country is empty. The user picked US.
+#
+# No key on purpose (open network). Set one from LuCI > Network > Wireless
+# before exposing the device anywhere untrusted.
+. /lib/functions/uci-defaults.sh
+
+board_config_update
+ucidef_set_country US
+ucidef_set_wireless 2g "BYTE" none
+ucidef_set_wireless 5g "BYTE" none
+board_config_flush
+
+exit 0

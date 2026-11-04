@@ -1,0 +1,9 @@
+{
+	"admin/status/vnstat2": {
+		"depends": {
+			"fs": {
+				"/etc/aw1000/show-vnstat2": "file"
+			}
+		}
+	}
+}

@@ -1,0 +1,19 @@
+#!/bin/sh
+# Keep the modem uplink at MTU 1420.
+#
+# QModem sets the interface MTU (builder/patches/.../0003-modem-mtu-1420.patch)
+# and the managed-IPv4 event helper forces 1420, but the DHCP path takes the
+# MTU from the modem's DHCP offer and a redial can land a different value. This
+# runs after every ifup/ifupdate on an interface bound to a modem and pins the
+# netdev. The v6 interface shares the same netdev, so both families follow.
+[ "$ACTION" = ifup ] || [ "$ACTION" = ifupdate ] || exit 0
+
+case "$INTERFACE" in ''|*[!A-Za-z0-9_]*) exit 0 ;; esac
+[ -n "$(uci -q get network.$INTERFACE.modem_config)" ] || exit 0
+[ -n "$DEVICE" ] || exit 0
+[ -d "/sys/class/net/$DEVICE" ] || exit 0
+
+[ "$(cat "/sys/class/net/$DEVICE/mtu" 2>/dev/null)" = 1420 ] ||
+	ip link set dev "$DEVICE" mtu 1420 2>/dev/null
+
+exit 0

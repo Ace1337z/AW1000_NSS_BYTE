@@ -1,0 +1,51 @@
+--- a/application/qmodem/files/usr/share/qmodem/modem_dial.sh	2026-11-05 06:21:46.291163366 +0800
++++ b/application/qmodem/files/usr/share/qmodem/modem_dial.sh	2026-11-05 06:21:46.318082588 +0800
+@@ -978,6 +978,32 @@
+     return 0
+ }
+ 
++ensure_modem_if()
++{
++    # Local: hang() -> flush_if() deletes network.<if> and network.<if>v6.
++    # The auto-dial monitors keep running afterwards and never call set_if
++    # again, so the uplink stayed deleted until the modem was re-added.
++    # Recreate the sections the current PDP type needs once, then let the
++    # normal dial path carry on. Cheap when nothing is missing.
++    [ "$bridge_enabled" = "1" ] && return 0
++    local t missing=0
++    t=$(printf '%s' "$pdp_type" | tr 'A-Z' 'a-z')
++    case "$t" in
++        ipv6)
++            [ -n "$(uci -q get network.$interface6_name)" ] || missing=1
++            ;;
++        ipv4v6|ipv4)
++            [ -n "$(uci -q get network.$interface_name)" ] || missing=1
++            [ -n "$(uci -q get network.$interface6_name)" ] || missing=1
++            ;;
++        *)
++            [ -n "$(uci -q get network.$interface_name)" ] || missing=1
++            ;;
++    esac
++    [ "$missing" = 0 ] && return 0
++    m_debug "uplink interface $interface_name/$interface6_name missing after hang, recreating"
++    set_if
++}
+ flush_if()
+ {
+     qmodem_config_lock || return 1
+@@ -1215,6 +1241,7 @@
+ 
+ qmi_dial()
+ {
++    ensure_modem_if
+     cmd_line="quectel-CM"
+     [ -e "/usr/bin/quectel-CM-M" ] && cmd_line="quectel-CM-M" && tom_modified=1
+     case $pdp_type in
+@@ -1287,6 +1314,7 @@
+     if [ -z "$pdp_type" ];then
+         pdp_type="IP"
+     fi
++    ensure_modem_if
+     [ -n "$apn" ] && apn_append=",\"$apn\"" || apn_append=""
+     local at_command='AT+COPS=0,0'
+     tmp=$(cmd_dial_command "${at_port}" "${at_command}")

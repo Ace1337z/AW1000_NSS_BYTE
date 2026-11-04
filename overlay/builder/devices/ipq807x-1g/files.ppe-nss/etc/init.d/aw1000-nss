@@ -1,0 +1,77 @@
+#!/bin/sh /etc/rc.common
+# AW1000: keep the NSS data path on, whatever the previous config said.
+#
+# Three things have to agree for the NSS cores to do any work:
+#   1. nss-wifi.general.offload=1 - read once at ath11k probe, so it must be
+#      committed before /etc/init.d/nss-wifi (START=19) runs;
+#   2. firewall flow offloading, software and hardware, on - fw4 refuses to
+#      put any flow table in the ruleset without it;
+#   3. the nss-wifi flow-table include present, so raw-IP modem devices
+#      (wwan0_1, no bridge member) are added to that table.
+#
+# Anything that turns one of these off leaves the box on the host path: this
+# script re-asserts all three each boot. It does not touch
+# /etc/nss-wifi.pending - a bring-up the board did not survive must still be
+# skipped once, not forced forever.
+START=18
+
+set_nss_wifi() {
+	local changed=0
+
+	[ -e /etc/config/nss-wifi ] || return 0
+
+	if [ "$(uci -q get nss-wifi.general.offload)" != 1 ]; then
+		uci -q set nss-wifi.general.offload=1
+		changed=1
+	fi
+	if [ -z "$(uci -q get nss-wifi.general.firmware)" ]; then
+		uci -q set nss-wifi.general.firmware=12.5
+		changed=1
+	fi
+	[ "$changed" = 1 ] && { uci -q commit nss-wifi; CHANGED=1; }
+
+	# rc.d symlink is what actually starts START=19 nss-wifi. A commit alone
+	# would not survive a user's "disable" from LuCI.
+	if [ -x /etc/init.d/nss-wifi ]; then
+		/etc/init.d/nss-wifi enabled || /etc/init.d/nss-wifi enable
+	fi
+}
+
+set_firewall() {
+	local section changed=0
+
+	[ -e /etc/config/firewall ] || return 0
+
+	section=$(uci -q -X show firewall |
+		sed -n 's/^firewall\.\([^.=]*\)=defaults$/\1/p' | head -1)
+	[ -n "$section" ] || section='@defaults[0]'
+
+	if [ "$(uci -q get "firewall.$section.flow_offloading")" != 1 ]; then
+		uci -q set "firewall.$section.flow_offloading=1"
+		changed=1
+	fi
+	if [ "$(uci -q get "firewall.$section.flow_offloading_hw")" != 1 ]; then
+		uci -q set "firewall.$section.flow_offloading_hw=1"
+		changed=1
+	fi
+	# Same section nss-wifi's uci-defaults creates; rc.common runs before
+	# that on an upgraded config, so re-create it here if it is gone.
+	if ! uci -q get firewall.nss_wifi_flowtable >/dev/null 2>&1; then
+		uci -q set firewall.nss_wifi_flowtable=include
+		uci -q set firewall.nss_wifi_flowtable.type='script'
+		uci -q set firewall.nss_wifi_flowtable.path='/usr/share/nss-wifi/flowtable.sh'
+		changed=1
+	fi
+	[ "$changed" = 1 ] && { uci -q commit firewall; CHANGED=1; }
+}
+
+start() {
+	CHANGED=0
+	set_nss_wifi
+	set_firewall
+	[ "$CHANGED" = 0 ] || logger -t aw1000-nss "re-asserted NSS offload settings"
+}
+
+stop() {
+	:
+}

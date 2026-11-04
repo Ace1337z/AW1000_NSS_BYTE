@@ -1,0 +1,36 @@
+diff --git a/application/qmodem/files/usr/libexec/qmodem-ipv4-event b/application/qmodem/files/usr/libexec/qmodem-ipv4-event
+index f32bb55..a1d6188 100755
+--- a/application/qmodem/files/usr/libexec/qmodem-ipv4-event
++++ b/application/qmodem/files/usr/libexec/qmodem-ipv4-event
+@@ -30,6 +30,9 @@ for ipval in "$address" "$mask" "$gateway" "$dns1" "$dns2"; do
+ done
+ [ "$action" != up ] || [ "$address" != 0.0.0.0 ] || exit 1
+ case "$mtu" in ''|*[!0-9]*) exit 2;; esac
++# Local: the uplink always runs MTU 1420, whatever DHCP or the modem reports
++# (VPN- and CGNAT-safe). The v6 interface shares this netdev, so it follows.
++mtu=1420
+ jq -n --arg generation "$QMODEM_GENERATION" --arg action "$action" --arg device "$device" \
+     --arg address "$address" --arg mask "$mask" --arg gateway "$gateway" --arg dns1 "$dns1" --arg dns2 "$dns2" --arg mtu "$mtu" \
+     '{generation:$generation,action:$action,device:$device,address:$address,mask:$mask,gateway:$gateway,dns1:$dns1,dns2:$dns2,mtu:$mtu}' > "$base/ipv4.json.tmp.$$" || exit 1
+diff --git a/application/qmodem/files/usr/share/qmodem/modem_dial.sh b/application/qmodem/files/usr/share/qmodem/modem_dial.sh
+index 307b6ca..3bfca5a 100755
+--- a/application/qmodem/files/usr/share/qmodem/modem_dial.sh
++++ b/application/qmodem/files/usr/share/qmodem/modem_dial.sh
+@@ -899,6 +899,17 @@ set_if()
+     fi
+ 
+ 
++    # Local: MTU 1420 on the modem uplink, re-applied on every (re)dial.
++    if [ "$env4" -eq 1 ] && [ -n "$(uci -q get network.$interface_name)" ] &&
++       [ "$(uci -q get network.$interface_name.mtu)" != "1420" ]; then
++        uci set network.${interface_name}.mtu='1420'
++        interface_update_flag=1
++    fi
++    if [ "$env6" -eq 1 ] && [ -n "$(uci -q get network.$interface6_name)" ] &&
++       [ "$(uci -q get network.$interface6_name.mtu)" != "1420" ]; then
++        uci set network.${interface6_name}.mtu='1420'
++        interface_update_flag=1
++    fi
+     set_modem_netcard=$modem_netcard
+     if [ -z "$set_modem_netcard" ];then
+         m_debug "no netcard found"

@@ -1,0 +1,19 @@
+#!/bin/sh /etc/rc.common
+# Boot-time IPv6 detection.
+#
+# The hotplug handler covers interface changes, but during boot the first iface
+# events can land before DHCPv6/RA has settled, so re-check once after the
+# network is up. Detached on purpose: nothing in boot should wait on IPv6.
+START=95
+STOP=10
+
+start() {
+	(
+		sleep 15
+		/usr/sbin/aw1000-ipv6-prefer
+	) >/dev/null 2>&1 &
+}
+
+stop() {
+	return 0
+}

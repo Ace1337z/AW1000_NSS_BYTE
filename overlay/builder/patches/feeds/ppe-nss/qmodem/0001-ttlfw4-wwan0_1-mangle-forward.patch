@@ -1,0 +1,134 @@
+diff --git a/luci/luci-app-qmodem-ttlfw4/htdocs/luci-static/resources/view/qmodem/ttl.js b/luci/luci-app-qmodem-ttlfw4/htdocs/luci-static/resources/view/qmodem/ttl.js
+index c91b628..9ccb2ab 100644
+--- a/luci/luci-app-qmodem-ttlfw4/htdocs/luci-static/resources/view/qmodem/ttl.js
++++ b/luci/luci-app-qmodem-ttlfw4/htdocs/luci-static/resources/view/qmodem/ttl.js
+@@ -42,10 +42,18 @@ return view.extend({
+ 
+ 		// Enable TTL modification
+ 		o = s.option(form.Flag, 'enable', _('Enable TTL Modification'));
+-		o.default = '0';
++		o.default = '1';
+ 		o.rmempty = false;
+ 		o.description = _('Enable or disable TTL/Hop Limit modification for outgoing packets.');
+ 
++		// WWAN interface
++		o = s.option(form.Value, 'iface', _('WWAN Interface'));
++		o.datatype = 'maxlength(15)';
++		o.default = 'wwan0_1';
++		o.placeholder = 'wwan0_1';
++		o.rmempty = false;
++		o.description = _('Egress interface the rewrite applies to (nft oifname). QModem names the PDP context interface wwan0_1; check "ip link" if the modem uses another name.');
++
+ 		// TTL Value
+ 		o = s.option(form.Value, 'ttl', _('TTL Value'));
+ 		o.datatype = 'range(1,255)';
+@@ -63,9 +71,8 @@ return view.extend({
+ 			return E('div', { 'class': 'cbi-value-description' }, [
+ 				E('p', { 'style': 'color: #c00; font-weight: bold;' }, _('Warning:')),
+ 				E('ul', {}, [
+-					E('li', {}, _('Enabling TTL modification will disable hardware flow offloading for proper packet modification.')),
+-					E('li', {}, _('This may affect network performance on some devices.')),
+-					E('li', {}, _('NSS ECM, SFE, and other acceleration modules will be disabled when TTL modification is active.')),
++					E('li', {}, _('The rewrite is a forward/mangle nft chain on the WWAN egress interface.')),
++					E('li', {}, _('Hardware flow offloading is left enabled: offloaded flows bypass netfilter, so their TTL is not rewritten after the first packet. Disable flow offloading if the carrier must see a constant TTL on every packet.')),
+ 					E('li', {}, _('Settings will take effect after saving and applying changes.'))
+ 				])
+ 			]);
+diff --git a/luci/luci-app-qmodem-ttlfw4/root/etc/config/qmodem_ttl b/luci/luci-app-qmodem-ttlfw4/root/etc/config/qmodem_ttl
+index a057dd0..db63793 100644
+--- a/luci/luci-app-qmodem-ttlfw4/root/etc/config/qmodem_ttl
++++ b/luci/luci-app-qmodem-ttlfw4/root/etc/config/qmodem_ttl
+@@ -1 +1,4 @@
+ config main 'main'
++	option enable '1'
++	option ttl '64'
++	option iface 'wwan0_1'
+diff --git a/luci/luci-app-qmodem-ttlfw4/root/etc/init.d/qmodem_ttl b/luci/luci-app-qmodem-ttlfw4/root/etc/init.d/qmodem_ttl
+index 2cbec3a..f273679 100755
+--- a/luci/luci-app-qmodem-ttlfw4/root/etc/init.d/qmodem_ttl
++++ b/luci/luci-app-qmodem-ttlfw4/root/etc/init.d/qmodem_ttl
+@@ -1,60 +1,56 @@
+ #!/bin/sh /etc/rc.common
++# QModem TTL: rewrite egress TTL/hop limit on the modem interface.
++#
++# BYTE local patch: the chain is the upstream rule set replaced by a single
++# forward/mangle chain keyed on the WWAN interface (oifname "wwan0_1") instead
++# of the br-lan postrouting rewrite, and the service no longer touches flow
++# offloading or the vendor ECM/shortcut-fe modules: this image is built around
++# PPE/NSS hardware offload and unloading it would defeat the build.
++# Consequence: flows that ARE offloaded in hardware bypass netfilter, so their
++# TTL is not rewritten after the first packet. Keep offload off on the WWAN
++# path (firewall.@defaults[0].flow_offloading/flow_offloading_hw) if the
++# carrier must see a constant TTL on every packet.
+ START=95
+ STOP=13
+ USE_PROCD=1
+-
+ . $IPKG_INSTROOT/usr/share/libubox/jshn.sh
+ . $IPKG_INSTROOT/lib/functions.sh
+-
+-nftfile="/etc/nftables.d/99-reset-ttl-from-br-lan.nft"
++nftfile="/etc/nftables.d/99-qmodem-ttl.nft"
++legacy="/etc/nftables.d/99-reset-ttl-from-br-lan.nft"
+ start_service()
+ {
+     config_load 'qmodem_ttl'
+     config_get enable 'main' 'enable' '0'
++    rm -f "$legacy"
+     if [ "$enable" == 0 ]; then
++        rm -f "$nftfile"
+         return
+     fi
+     set_if_ttl
+ }
+-
+ set_if_ttl()
+ {
+-    config_get ttl 'main' 'ttl'
+-    logger -t modem_ttl "Ovrewirte TTL from br-lan to $ttl"
+-    comment="modem_ttl"
+-    #nftables
++    config_get ttl 'main' 'ttl' '64'
++    config_get iface 'main' 'iface' 'wwan0_1'
++    logger -t modem_ttl "Override TTL to $ttl on $iface"
+     cat << EOF > $nftfile
+-chain postrouting {
+-    type filter hook postrouting priority mangle; policy accept;
+-    iifname "br-lan" ip ttl set $ttl comment "Reset TTL for br-lan IPv4"
+-    iifname "br-lan" ip6 hoplimit set $ttl comment "Reset Hop Limit for br-lan IPv6"
+-}
++chain mangle_forward {
++    type filter hook forward priority mangle; policy accept;
+ 
++    oifname "$iface" ip ttl != $ttl ip ttl set $ttl
++    oifname "$iface" ip6 hoplimit != $ttl ip6 hoplimit set $ttl
++}
+ EOF
+-    /etc/firewall.d/qmodem_ttl
+-    [ -d /sys/kernel/debug/ecm/ ] && /etc/init.d/qca-nss-ecm stop
+-    [ -d /sys/module/shortcut_fe_cm ] && rmmod shortcut_fe_cm
+-    [ -d /sys/module/fast_classifier ] && rmmod fast_classifier
+-    uci set firewall.@defaults[0].flow_offloading='0'
+-    uci set firewall.@defaults[0].flow_offloading_hw='0'
+-    uci commit firewall
+     /etc/init.d/firewall restart
+ }
+-
+ stop_service(){
+-    local kernel_version=$(uname -r)
+-    rm -f $nftfile
+-    [ -f /etc/init.d/qca-nss-ecm ] && /etc/init.d/qca-nss-ecm start
+-    [ -e "/lib/modules/$kernel_version/shortcut-fe-cm.ko" ] && modprobe shortcut-fe-cm
+-    [ -e "/lib/modules/$kernel_version/fast-classifier.ko" ] && modprobe fast-classifier
++    rm -f "$nftfile" "$legacy"
+     /etc/init.d/firewall restart
+ }
+-
+ service_triggers()
+ {
+ 	procd_add_reload_trigger "qmodem_ttl"
+ }
+-
+ reload_service()
+ {
+     stop

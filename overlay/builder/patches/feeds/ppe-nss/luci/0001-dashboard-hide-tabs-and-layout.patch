@@ -1,0 +1,49 @@
+diff --git a/modules/luci-mod-dashboard/htdocs/luci-static/resources/view/dashboard/index.js b/modules/luci-mod-dashboard/htdocs/luci-static/resources/view/dashboard/index.js
+index 6a8e755..c6fbe90 100644
+--- a/modules/luci-mod-dashboard/htdocs/luci-static/resources/view/dashboard/index.js
++++ b/modules/luci-mod-dashboard/htdocs/luci-static/resources/view/dashboard/index.js
+@@ -72,7 +72,11 @@ function collectSections(includes, results, layout) {
+ 
+ 			// Items may defer building their node or tab content until selected.
+ 			// Includes without widget declarations keep their original behavior.
+-			for (const slot of widgets.slots)
++			for (const slot of widgets.slots) {
++				// Local: the detail tabs at the bottom of the page are off.
++				// Everything below the cards and charts is hidden.
++				if (slot == 'tabs')
++					continue;
+ 				(content[slot] || (slot == 'cards' ? content.kpi : null) || []).forEach(item => {
+ 					if (item instanceof Node)
+ 						sections[slot].push(item);
+@@ -85,6 +89,7 @@ function collectSections(includes, results, layout) {
+ 						found[slot][item.id] = (slot == 'tabs') ? Object.assign({}, item, { content: node }) : node;
+ 					}
+ 				});
++			}
+ 		}
+ 		catch (e) {
+ 			console.error(e);
+@@ -286,7 +291,12 @@ function startPolling(includes, layout, root, form) {
+ return view.extend({
+ 	load() {
+ 		return widgets.load().then(includes => {
+-			return widgets.layout(includes).then(layout => [ includes, layout ]);
++			return widgets.layout(includes).then(layout => {
++				// Local: no detail tabs. Emptying the slot also skips the
++				// includes that only fill a tab (DHCP leases, iwinfo clients).
++				layout.tabs = [];
++				return [ includes, layout ];
++			});
+ 		});
+ 	},
+ 
+@@ -295,7 +305,8 @@ return view.extend({
+ 
+ 		document.addEventListener('uci-applied', () => window.location.reload());
+ 
+-		const form = L.hasViewPermission() ? E('div', { 'class': 'cbi-section', 'data-tab': 'layout', 'data-tab-title': _('Layout') }, [ E('em', { 'class': 'spinning' }, [ _('Loading view…') ]) ]) : null;
++		// Local: no Layout editor. It only reordered lists that are fixed here.
++		const form = null;
+ 
+ 		return startPolling(includes, layout, root, form).then(() => root);
+ 	},

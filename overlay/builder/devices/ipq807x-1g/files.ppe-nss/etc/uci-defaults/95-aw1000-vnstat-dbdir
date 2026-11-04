@@ -1,0 +1,26 @@
+#!/bin/sh
+# vnstat2 keeps its database in /etc/vnstat instead of /var/lib/vnstat.
+#
+# /var is tmpfs on this image: the counters would restart at 0 on every boot.
+# /etc lives on the overlay and is preserved by sysupgrade, so the vnstat
+# history (which luci-app-netstat graphs) survives both reboots and upgrades.
+#
+# The marker in /etc/config/system stops a later hand edit of /etc/vnstat.conf
+# from being reverted on the next settings-keeping upgrade.
+[ "$(uci -q get system.@system[0].aw1000_vnstat_dbdir)" = 1 ] && exit 0
+
+mkdir -p /etc/vnstat
+
+if [ -f /etc/vnstat.conf ]; then
+	if grep -qE '^[[:space:]]*#?[[:space:]]*DatabaseDir' /etc/vnstat.conf; then
+		sed -i -E 's|^[[:space:]]*#?[[:space:]]*DatabaseDir.*|DatabaseDir "/etc/vnstat"|' \
+			/etc/vnstat.conf
+	else
+		printf '\nDatabaseDir "/etc/vnstat"\n' >> /etc/vnstat.conf
+	fi
+fi
+
+uci -q set system.@system[0].aw1000_vnstat_dbdir='1'
+uci -q commit system
+
+exit 0

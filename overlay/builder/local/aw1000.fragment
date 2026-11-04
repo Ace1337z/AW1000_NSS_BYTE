@@ -1,0 +1,247 @@
+# Local override: only the Arcadyan AW1000 out of the ipq807x-1g group.
+# Generated 2026-11-04. The group config stays untouched so a git pull stays clean.
+CONFIG_TARGET_DEVICE_qualcommax_ipq807x_DEVICE_aliyun_ap8220=n
+CONFIG_TARGET_DEVICE_qualcommax_ipq807x_DEVICE_asus_rt-ax89x=n
+CONFIG_TARGET_DEVICE_qualcommax_ipq807x_DEVICE_buffalo_wxr-5950ax12=n
+CONFIG_TARGET_DEVICE_qualcommax_ipq807x_DEVICE_dynalink_dl-wrx36=n
+CONFIG_TARGET_DEVICE_qualcommax_ipq807x_DEVICE_edgecore_eap102=n
+CONFIG_TARGET_DEVICE_qualcommax_ipq807x_DEVICE_linksys_homewrk=n
+CONFIG_TARGET_DEVICE_qualcommax_ipq807x_DEVICE_linksys_mx4200v2=n
+CONFIG_TARGET_DEVICE_qualcommax_ipq807x_DEVICE_linksys_mx4300=n
+CONFIG_TARGET_DEVICE_qualcommax_ipq807x_DEVICE_linksys_mx5300=n
+CONFIG_TARGET_DEVICE_qualcommax_ipq807x_DEVICE_linksys_mx8500=n
+CONFIG_TARGET_DEVICE_qualcommax_ipq807x_DEVICE_netgear_rax120v2=n
+CONFIG_TARGET_DEVICE_qualcommax_ipq807x_DEVICE_netgear_rbr750=n
+CONFIG_TARGET_DEVICE_qualcommax_ipq807x_DEVICE_netgear_rbr850=n
+CONFIG_TARGET_DEVICE_qualcommax_ipq807x_DEVICE_netgear_rbs750=n
+CONFIG_TARGET_DEVICE_qualcommax_ipq807x_DEVICE_netgear_rbs850=n
+CONFIG_TARGET_DEVICE_qualcommax_ipq807x_DEVICE_netgear_sxr80=n
+CONFIG_TARGET_DEVICE_qualcommax_ipq807x_DEVICE_netgear_sxs80=n
+CONFIG_TARGET_DEVICE_qualcommax_ipq807x_DEVICE_netgear_wax620=n
+CONFIG_TARGET_DEVICE_qualcommax_ipq807x_DEVICE_netgear_wax630=n
+CONFIG_TARGET_DEVICE_qualcommax_ipq807x_DEVICE_prpl_haze=n
+CONFIG_TARGET_DEVICE_qualcommax_ipq807x_DEVICE_qnap_301w=n
+CONFIG_TARGET_DEVICE_qualcommax_ipq807x_DEVICE_spectrum_sax1v1k=n
+CONFIG_TARGET_DEVICE_qualcommax_ipq807x_DEVICE_tcl_linkhub-hh500v=n
+CONFIG_TARGET_DEVICE_qualcommax_ipq807x_DEVICE_tplink_deco-x80-5g=n
+CONFIG_TARGET_DEVICE_qualcommax_ipq807x_DEVICE_tplink_eap620hd-v1=n
+CONFIG_TARGET_DEVICE_qualcommax_ipq807x_DEVICE_tplink_eap660hd-v1=n
+CONFIG_TARGET_DEVICE_qualcommax_ipq807x_DEVICE_xiaomi_ax9000=n
+CONFIG_TARGET_DEVICE_qualcommax_ipq807x_DEVICE_yuncore_ax880=n
+CONFIG_TARGET_DEVICE_qualcommax_ipq807x_DEVICE_zbtlink_zbt-z800ax=n
+CONFIG_TARGET_DEVICE_qualcommax_ipq807x_DEVICE_zyxel_nbg7815=n
+CONFIG_TARGET_DEVICE_qualcommax_ipq807x_DEVICE_zyxel_nwa110ax=n
+CONFIG_TARGET_DEVICE_qualcommax_ipq807x_DEVICE_zyxel_nwa210ax=n
+
+# --- Custom packages (Ace1337z/AW1000_BYTE, VizzleTF, Perz3us, dotywrt) ---
+## LuCI theme
+CONFIG_PACKAGE_luci-theme-footstrap=y
+## AW1000 RJ11 phone port: luci-app-fxs + fxsd + kmod-aw1000-fxs
+## (Si32261 DSP patch ships in /etc/fxs; SIP via qmodem-voip/qmodem-sipd)
+CONFIG_PACKAGE_luci-app-fxs=y
+CONFIG_PACKAGE_fxsd=y
+## dotycat NET Stats (vnstat backed)
+CONFIG_PACKAGE_luci-app-netstat=y
+## Modem information page (repo copy; needs sms-tool_q from the qmodem feed)
+CONFIG_PACKAGE_luci-app-modeminfo=y
+## PassWall v1 (repo copy 4.66-8) and PassWall2 (upstream 26.4.10 pin)
+CONFIG_PACKAGE_luci-app-passwall=y
+CONFIG_PACKAGE_luci-app-passwall2=y
+## Basic Xray core only: no v2ray/sing-box/hysteria/ss/trojan/brook/haproxy/naive
+CONFIG_PACKAGE_xray-core=y
+CONFIG_PACKAGE_luci-app-passwall_INCLUDE_Xray=y
+CONFIG_PACKAGE_luci-app-passwall_INCLUDE_Brook=n
+CONFIG_PACKAGE_luci-app-passwall_INCLUDE_Haproxy=n
+CONFIG_PACKAGE_luci-app-passwall_INCLUDE_Hysteria=n
+CONFIG_PACKAGE_luci-app-passwall_INCLUDE_NaiveProxy=n
+CONFIG_PACKAGE_luci-app-passwall_INCLUDE_Shadowsocks_Libev_Client=n
+CONFIG_PACKAGE_luci-app-passwall_INCLUDE_Shadowsocks_Libev_Server=n
+CONFIG_PACKAGE_luci-app-passwall_INCLUDE_Shadowsocks_Rust_Client=n
+CONFIG_PACKAGE_luci-app-passwall_INCLUDE_Shadowsocks_Rust_Server=n
+CONFIG_PACKAGE_luci-app-passwall_INCLUDE_ShadowsocksR_Libev_Client=n
+CONFIG_PACKAGE_luci-app-passwall_INCLUDE_ShadowsocksR_Libev_Server=n
+CONFIG_PACKAGE_luci-app-passwall_INCLUDE_Simple_Obfs=n
+CONFIG_PACKAGE_luci-app-passwall_INCLUDE_Trojan_GO=n
+CONFIG_PACKAGE_luci-app-passwall_INCLUDE_Trojan_Plus=n
+CONFIG_PACKAGE_luci-app-passwall_INCLUDE_V2ray=n
+CONFIG_PACKAGE_luci-app-passwall_INCLUDE_V2ray_Geodata=n
+CONFIG_PACKAGE_luci-app-passwall_INCLUDE_V2ray_Plugin=n
+CONFIG_PACKAGE_luci-app-passwall_INCLUDE_Xray_Plugin=n
+CONFIG_PACKAGE_luci-app-passwall2_INCLUDE_Haproxy=n
+CONFIG_PACKAGE_luci-app-passwall2_INCLUDE_Hysteria=n
+CONFIG_PACKAGE_luci-app-passwall2_INCLUDE_NaiveProxy=n
+CONFIG_PACKAGE_luci-app-passwall2_INCLUDE_Shadowsocks_Libev_Client=n
+CONFIG_PACKAGE_luci-app-passwall2_INCLUDE_Shadowsocks_Libev_Server=n
+CONFIG_PACKAGE_luci-app-passwall2_INCLUDE_Shadowsocks_Rust_Client=n
+CONFIG_PACKAGE_luci-app-passwall2_INCLUDE_Shadowsocks_Rust_Server=n
+CONFIG_PACKAGE_luci-app-passwall2_INCLUDE_ShadowsocksR_Libev_Client=n
+CONFIG_PACKAGE_luci-app-passwall2_INCLUDE_ShadowsocksR_Libev_Server=n
+CONFIG_PACKAGE_luci-app-passwall2_INCLUDE_Simple_Obfs=n
+CONFIG_PACKAGE_luci-app-passwall2_INCLUDE_SingBox=n
+CONFIG_PACKAGE_luci-app-passwall2_INCLUDE_tuic_client=n
+CONFIG_PACKAGE_luci-app-passwall2_INCLUDE_V2ray_Plugin=n
+
+# --- QModem: every package that can coexist in this image ---
+## alternatives excluded on purpose:
+##   luci-app-qmodem-next (+ -monitor, i18n-next): depends @(luci-app-qmodem-next=n) on
+##     luci-app-qmodem and collides on view/status/include/11_modem.js
+##   luci-app-qmodem-hc: HC-G80 hardware only
+##   luci-app-qmodem-ttl: file collision with -ttlfw4 (both ship /etc/config/qmodem_ttl)
+##   sms-forwarder: conflicts sms-forwarder-next
+##   kmod-rmnet-nss, kmod-qmi_wwan_q_nss, kmod-pcie_mhi_nss: need kmod-qca-nss-drv,
+##     which ppe-nss does not have (no vendor NSS host driver)
+CONFIG_PACKAGE_qmodem=y
+CONFIG_PACKAGE_qmodem_INCLUDE_SEAL=y
+CONFIG_PACKAGE_qmodem_INCLUDE_ndisc6=y
+CONFIG_PACKAGE_qmodem_INCLUDE_vendor-qmi-wwan=y
+CONFIG_PACKAGE_qmodem_INCLUDE_ADD_PCI_SUPPORT=y
+CONFIG_PACKAGE_qmodem_VENDOR_MHI_PCIe_DRIVER=y
+CONFIG_PACKAGE_qmodem_INCLUDE_ADD_QFIREHOSE_SUPPORT=y
+CONFIG_PACKAGE_qmodem_USE_TOM_CUSTOMIZED_QUECTEL_CM=y
+CONFIG_PACKAGE_qmodem_INCLUDE_no_ndisc_rdisc6=n
+CONFIG_PACKAGE_qmodem_INCLUDE_rdisc6=n
+CONFIG_PACKAGE_qmodem_INCLUDE_generic-qmi-wwan=n
+CONFIG_PACKAGE_qmodem_INCLUDE_nss-qmi-wwan=n
+CONFIG_PACKAGE_qmodem_GENERIC_MHI_PCIe_DRIVER=n
+CONFIG_PACKAGE_qmodem_NSS_MHI_PCIe_DRIVER=n
+CONFIG_PACKAGE_qmodem_USING_QWRT_QUECTEL_CM_5G=n
+CONFIG_PACKAGE_qmodem_USING_NORMAL_QUECTEL_CM=n
+CONFIG_PACKAGE_qmodem_INCLUDE_ADD_MTK_T7XX_SUPPORT=n
+## helpers and daemons
+CONFIG_PACKAGE_libqmodem-sms=y
+CONFIG_PACKAGE_modem_scan=y
+CONFIG_PACKAGE_qmodem-settings=y
+CONFIG_PACKAGE_qmodem-seal=y
+CONFIG_PACKAGE_qmodem-smsd=y
+CONFIG_PACKAGE_qmodem-sipd=y
+CONFIG_PACKAGE_qmodem-voip=y
+CONFIG_PACKAGE_qmodem_monitor=y
+CONFIG_PACKAGE_qmodem-uplink-manager=y
+CONFIG_PACKAGE_sms-tool_q=y
+CONFIG_PACKAGE_sms-forwarder-next=y
+CONFIG_PACKAGE_tom_modem=y
+CONFIG_PACKAGE_tom_modem_EARLY_RETURN=y
+CONFIG_PACKAGE_tom_modem_ENABLE_UBUS_DAEMON=y
+CONFIG_PACKAGE_ubus-at-daemon=y
+CONFIG_PACKAGE_qfirehose=y
+CONFIG_PACKAGE_quectel-CM-5G-M=y
+CONFIG_PACKAGE_ndisc6=y
+CONFIG_PACKAGE_rdnssd=y
+CONFIG_PACKAGE_traceroute6=y
+## QMI/PCIe modem drivers (vendor, non-NSS)
+CONFIG_PACKAGE_kmod-qmi_wwan_q=y
+CONFIG_PACKAGE_kmod-qmi_wwan_f=y
+CONFIG_PACKAGE_kmod-qmi_wwan_s=y
+CONFIG_PACKAGE_kmod-pcie_mhi=y
+## LuCI pages (Lua stack) + zh-cn/ru i18n
+CONFIG_PACKAGE_luci-app-qmodem=y
+CONFIG_PACKAGE_luci-app-qmodem-sms=y
+CONFIG_PACKAGE_luci-app-qmodem-ttlfw4=y
+CONFIG_PACKAGE_luci-app-qmodem-voip=y
+CONFIG_PACKAGE_luci-app-qmodem-uplink=y
+CONFIG_PACKAGE_luci-app-qmodem-mwan=y
+CONFIG_PACKAGE_luci-i18n-qmodem-zh-cn=y
+CONFIG_PACKAGE_luci-i18n-qmodem-ru=y
+CONFIG_PACKAGE_luci-i18n-qmodem-sms-zh-cn=y
+CONFIG_PACKAGE_luci-i18n-qmodem-ttlfw4-zh-cn=y
+CONFIG_PACKAGE_luci-i18n-qmodem-voip-zh-cn=y
+CONFIG_PACKAGE_luci-i18n-qmodem-uplink-zh-cn=y
+CONFIG_PACKAGE_luci-i18n-qmodem-mwan-zh-cn=y
+## voip chain: these are unselected leaves, so qmodem-voip resolved to =m and
+## dropped out of the image; force them =y so the SIP stack ships
+CONFIG_PACKAGE_adb=y
+CONFIG_PACKAGE_alsa-lib=y
+CONFIG_PACKAGE_libsoxr=y
+CONFIG_PACKAGE_libwebsockets-openssl=y
+CONFIG_PACKAGE_px5g-mbedtls=y
+CONFIG_PACKAGE_libpj=y
+CONFIG_PACKAGE_libpjlib-util=y
+CONFIG_PACKAGE_libpjsip=y
+CONFIG_PACKAGE_libpjsip-ua=y
+
+# --- Dashboard widgets (XT-Martinez/aw1000-feed, aw1000-defaults @ a7e14ad) ---
+## aw1000-dashboard is the local vendor of that package's dashboard half: the
+## mobile/thermal/storage widgets, their cell/mcc libs, the ACL and the
+## aw1000-leds poller that fills /tmp/aw1000-status and drives the front panel
+## LEDs. Its NSS-offload card is replaced by a Storage card - this image has
+## nss-firmware but no qca-nss-ecm, so the offload counters never existed.
+## luci-mod-dashboard is patched (patches/feeds/ppe-nss/luci/
+## 0001-dashboard-hide-tabs-and-layout.patch): the bottom detail tabs and the
+## Layout editor are hidden.
+CONFIG_PACKAGE_luci-mod-dashboard=y
+CONFIG_PACKAGE_aw1000-dashboard=y
+
+# --- Wi-Fi language packs: LUCI_LANG_* is what makes the hidden
+# luci-i18n-*-zh-cn/-ru packages remain selected. ---
+CONFIG_LUCI_LANG_zh_Hans=y
+CONFIG_LUCI_LANG_ru=y
+
+## voip chain: alsa-lib needs audio-support =y, or alsa-lib stays =m and takes
+## qmodem-voip/-sipd and luci-app-qmodem-voip down with it.
+CONFIG_PACKAGE_audio-support=y
+
+# --- Tuning: BBR + fq + TCP Fast Open, hand-rolled sysctls in
+# /etc/sysctl.d/99-aw1000-tuning.conf (kmod-tcp-bbr only ships the congestion
+# control line). kmod-sched carries sch_fq.ko; the qualcommax kernel config has
+# CPU_FREQ_GOV_PERFORMANCE=y, /etc/init.d/aw1000-tuning selects it each boot.
+CONFIG_PACKAGE_kmod-tcp-bbr=y
+CONFIG_PACKAGE_kmod-sched=y
+# zram swap: 512 MB, zstd (backend + default compressor, else zram-swap falls
+# back to lzo-rle). Size and algorithm are set by 94-aw1000-zram.
+CONFIG_PACKAGE_kmod-zram=y
+CONFIG_PACKAGE_zram-swap=y
+CONFIG_KERNEL_ZRAM_BACKEND_ZSTD=y
+CONFIG_KERNEL_ZRAM_DEF_COMP_ZSTD=y
+
+# --- vnstat keeps its database in /etc/vnstat (see 95-aw1000-vnstat-dbdir);
+# luci-app-vnstat2 is installed but its "Traffic Monitor" menu node is hidden
+# by usr/share/luci/menu.d/zz-aw1000-hide-vnstat2.json.
+CONFIG_PACKAGE_luci-app-vnstat2=y
+# --- NSS data path pinned on (no matter what) ---
+## The ppe-nss target already selects these; repeating them here is the
+## build-time half of the guarantee, so a target/config change cannot quietly
+## drop them. The runtime half is /etc/init.d/aw1000-nss (START=18), which
+## re-asserts nss-wifi.general.offload=1, fw4 flow_offloading(_hw)=1 and the
+## flow-table include before nss-wifi (START=19) probes the radios.
+CONFIG_PACKAGE_nss-firmware=y
+CONFIG_PACKAGE_nss-firmware-ipq807x=y
+CONFIG_NSS_FIRMWARE_VERSION_12_5=y
+CONFIG_PACKAGE_kmod-nss-wifi-drv=y
+CONFIG_PACKAGE_kmod-nft-bridge=y
+CONFIG_ATH11K_NSS_WIFI=y
+## NSS-offload modem drivers stay out: their kernel dep kmod-qca-nss-drv is not
+## in ppe-nss (the vendor NSS host driver is what the wired PPE path replaces),
+## so building them fails. CONFIG_ALL_KMODS=y may still leave them =m; =m
+## packages are not built or installed, so this is documentation, not a switch.
+CONFIG_PACKAGE_kmod-rmnet-nss=n
+CONFIG_PACKAGE_kmod-qmi_wwan_q_nss=n
+CONFIG_PACKAGE_kmod-pcie_mhi_nss=n
+# --- BYTE panel (Ace1337z/AW1000_BYTE, packages/luci-app-byte @ c3afe91) ---
+## One page for AdGuard Home setup/status, the DNS chain and system state.
+## Local vendor patches the upstream menu from admin/tools to admin/services.
+CONFIG_PACKAGE_luci-app-byte=y
+# --- OpenClash / Nikki: dependencies only, apps deliberately absent ---
+## The LuCI apps and their cores are NOT shipped; install them at runtime
+## (opkg/apk or a feed) and everything they declare is already here.
+## OpenClash: +dnsmasq-full +bash +curl +ca-bundle +ip-full +ruby +ruby-yaml
+##            +kmod-tun +unzip, plus its config-menu picks for firewall4:
+##            kmod-inet-diag, luci-compat, kmod-nft-tproxy, dnsmasq_full_nftset
+## Nikki:     ca-bundle curl yq firewall4 ip-full kmod-inet-diag kmod-nft-socket
+##            kmod-nft-tproxy kmod-tun kmod-dummy (mihomo is its own dep and is
+##            not in these feeds, so it stays out)
+CONFIG_PACKAGE_bash=y
+CONFIG_PACKAGE_ruby=y
+CONFIG_PACKAGE_ruby-yaml=y
+CONFIG_PACKAGE_yq=y
+CONFIG_PACKAGE_kmod-inet-diag=y
+CONFIG_PACKAGE_kmod-dummy=y
+CONFIG_PACKAGE_dnsmasq-full=y
+CONFIG_PACKAGE_dnsmasq_full_nftset=y
+CONFIG_PACKAGE_kmod-nft-tproxy=y
+CONFIG_PACKAGE_kmod-nft-socket=y
+CONFIG_PACKAGE_kmod-tun=y
+CONFIG_PACKAGE_unzip=y
+CONFIG_PACKAGE_ip-full=y
+CONFIG_PACKAGE_curl=y
+CONFIG_PACKAGE_ca-bundle=y
+CONFIG_PACKAGE_luci-compat=y
