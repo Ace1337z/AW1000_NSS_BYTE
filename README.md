@@ -51,6 +51,31 @@ keep a serial console or the vendor TFTP recovery path reachable, and a
 known-good image plus a config backup. A failed sysupgrade on this board is
 recoverable over serial/TFTP, not over the network alone.
 
+## Default access after flash
+
+| what | value |
+| --- | --- |
+| LAN address | `192.168.1.1/24` (DHCP server on) |
+| LuCI | `http://192.168.1.1/` (HTTPS also on `:443`, stock cert auto-generated) |
+| LuCI / SSH user | `root` |
+| LuCI / SSH password | *(empty — no password)* |
+| Hostname | `BYTE` (`BYTE by ACE`) |
+| Wi-Fi SSID | `BYTE` (2.4 GHz and 5 GHz, same name) |
+| Wi-Fi password | *(none — open network)* |
+| Wi-Fi country | `US` |
+| SSH | `ssh root@192.168.1.1` (blank password accepted) |
+| Phone/SIP extension | user `byte`, random password in `/root/SIP-CREDENTIALS.txt` (mode 0600) |
+
+Firewall: WAN-side input is dropped as in stock OpenWrt, so LuCI/SSH are
+reachable from LAN only. The BYTE panel is under **Services → BYTE**.
+
+> **Security warning.** The WLAN is open (no passphrase) and the root account
+> has an empty password, both by design for first boot. Anyone in radio range
+> can join the network, and anyone on the network can log in as `root`. Set a
+> Wi-Fi passphrase (`wireless.@wifi-iface[0].encryption=psk2` +
+> `wireless.@wifi-iface[0].key=...`) and a root password (`passwd`) before
+> putting this device on an untrusted network. Do not port-forward LuCI or SSH.
+
 ## CI
 
 Push to `main` (or run the workflow manually) and GitHub Actions builds the
@@ -62,6 +87,5 @@ missing or the release carries no sysupgrade asset.
 
 - `si3226x_patch.bin` is the Skyworks ProSLIC DSP patch used by the stock
   firmware. It is stored base64 (`si3226x_patch.bin.b64`) so the repository stays
-  text-only; `prepare.sh` decodes it. It is third-party vendor code — check
-  whether redistribution is acceptable for your use before making this repo
-  public.
+  text-only; `prepare.sh` decodes it. It is third-party vendor code and this
+  repository redistributes it — check whether that is acceptable for your use.
