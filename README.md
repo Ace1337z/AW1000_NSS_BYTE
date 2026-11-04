@@ -63,6 +63,7 @@ recoverable over serial/TFTP, not over the network alone.
 | Wi-Fi SSID | `BYTE` (2.4 GHz and 5 GHz, same name) |
 | Wi-Fi password | *(none — open network)* |
 | Wi-Fi country | `US` |
+| LuCI theme | Footstrap (default; Bootstrap still installed as fallback) |
 | SSH | `ssh root@192.168.1.1` (blank password accepted) |
 | Phone/SIP extension | user `byte`, random password in `/root/SIP-CREDENTIALS.txt` (mode 0600) |
 

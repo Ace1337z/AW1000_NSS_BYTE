@@ -80,8 +80,16 @@ Notes:
 - `luci-app-passwall` (v1) ships **disabled** (repo design: `global.enabled=0`,
   no rc.d link), so it cannot fight passwall2 over port 53.
 - `luci-app-netstat` needs `vnstat`; `vnstat2` `PROVIDES:=vnstat` satisfies it.
-- theme is **included but not made default**:
-  `uci set luci.main.mediaurlbase=/luci-static/footstrap && uci commit luci`
+- theme: **Footstrap is the default**. `luci-theme-footstrap` is installed, but
+  its own `/etc/uci-defaults/30_luci-theme-footstrap` cannot select itself:
+  `luci-base` already ships `option mediaurlbase '/luci-static/bootstrap'` in
+  `/etc/config/luci` and the theme's `set_opt` helper returns early when the
+  option exists. `etc/uci-defaults/93-aw1000-theme` therefore sets
+  `luci.themes.Footstrap=/luci-static/footstrap` and
+  `luci.main.mediaurlbase=/luci-static/footstrap` once at first boot (it sorts
+  after the theme's `30_*`, is skipped if `/www/luci-static/footstrap` is
+  missing, and never runs again, so a theme chosen later is kept).
+  `luci-theme-bootstrap` stays installed as a fallback.
 - `luci-app-byte` is vendored and its menu moved from `admin/tools` to
   `admin/services/byte`, so the BYTE panel sits in **Services**.
 - OpenClash and Nikki are **not** in the image; only what they declare is:

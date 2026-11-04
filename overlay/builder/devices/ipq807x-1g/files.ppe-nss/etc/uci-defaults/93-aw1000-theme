@@ -1,0 +1,26 @@
+#!/bin/sh
+#
+# Footstrap as the default LuCI theme.
+#
+# The theme package ships its own /etc/uci-defaults/30_luci-theme-footstrap, but
+# it cannot select itself here: luci-base already ships
+#   option mediaurlbase '/luci-static/bootstrap'
+# in /etc/config/luci, and the theme's helper (set_opt) returns early when the
+# option exists. Result without this script: the image boots on Bootstrap even
+# though luci-theme-footstrap is installed.
+#
+# Runs once at first boot (93 sorts after the theme's own 30_*). It never runs
+# again, so a theme the admin picks later is not overridden.
+[ -d /www/luci-static/footstrap ] || exit 0
+
+uci -q get luci.main >/dev/null 2>&1 || uci set luci.main=core
+uci -q set luci.themes.Footstrap='/luci-static/footstrap'
+uci -q set luci.main.mediaurlbase='/luci-static/footstrap'
+uci -q commit luci
+
+# LuCI caches the ucode template/module index under /tmp; nothing has been
+# served yet at first boot, but drop it so a theme switch applied later by an
+# upgrade script cannot render a stale index.
+rm -rf /tmp/luci-indexcache* /tmp/luci-modulecache 2>/dev/null
+
+exit 0
