@@ -137,6 +137,19 @@ if [ -f "$CONFIG" ]; then
 	if grep -qE '^CONFIG_PACKAGE_luci-theme-footstrap=m$' "$CONFIG"; then
 		bad "luci-theme-footstrap is =m, it would not be in the image"
 	fi
+	# CONFIG_ALL_KMODS=y makes the world build compile every kmod package in
+	# every feed (~1100 modules); any legacy driver that does not track the
+	# current kernel API then fails the build even though it is not in the
+	# image. PF_RING 9.2.0 (kmod-pf-ring) is the known one on linux-6.18.
+	# The image ships exactly the =y modules, so build only those.
+	if grep -qE '^CONFIG_ALL_KMODS=y$' "$CONFIG"; then
+		bad "CONFIG_ALL_KMODS=y would build all ~1100 kmods (PF_RING breaks on 6.18); the fragment must set it n"
+	fi
+	for sym in CONFIG_PACKAGE_kmod-pf-ring CONFIG_PACKAGE_libpfring; do
+		if grep -qE "^$sym=[ym]$" "$CONFIG"; then
+			bad "$sym must be off (PF_RING cannot build against linux-6.18)"
+		fi
+	done
 fi
 
 head2 "feed patches"

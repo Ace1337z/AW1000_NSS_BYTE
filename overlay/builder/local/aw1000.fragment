@@ -211,8 +211,8 @@ CONFIG_PACKAGE_kmod-nft-bridge=y
 CONFIG_ATH11K_NSS_WIFI=y
 ## NSS-offload modem drivers stay out: their kernel dep kmod-qca-nss-drv is not
 ## in ppe-nss (the vendor NSS host driver is what the wired PPE path replaces),
-## so building them fails. CONFIG_ALL_KMODS=y may still leave them =m; =m
-## packages are not built or installed, so this is documentation, not a switch.
+## so building them fails. CONFIG_ALL_KMODS is off (see below), so =n here is
+## definitive: they are neither built nor installed.
 CONFIG_PACKAGE_kmod-rmnet-nss=n
 CONFIG_PACKAGE_kmod-qmi_wwan_q_nss=n
 CONFIG_PACKAGE_kmod-pcie_mhi_nss=n
@@ -245,3 +245,15 @@ CONFIG_PACKAGE_ip-full=y
 CONFIG_PACKAGE_curl=y
 CONFIG_PACKAGE_ca-bundle=y
 CONFIG_PACKAGE_luci-compat=y
+# --- Build only the kernel modules we actually select ---
+## The builder's common config sets CONFIG_ALL_KMODS=y, which makes the world
+## build compile every kmod package in every feed (~1100 modules). Any legacy
+## driver that does not follow current kernel APIs then fails the whole build
+## even though it is not in the image. Known: PF_RING 9.2.0
+## (kmod-pf-ring) breaks on linux-6.18 with a sockaddr_unsized prototype
+## error plus -march=native, and nothing in this image needs it. The image
+## ships exactly the modules selected below (=y); =m packages are not built
+## or installed.
+CONFIG_ALL_KMODS=n
+CONFIG_PACKAGE_kmod-pf-ring=n
+CONFIG_PACKAGE_libpfring=n

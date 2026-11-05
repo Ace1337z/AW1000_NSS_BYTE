@@ -315,7 +315,17 @@ output) and, when the build fails, re-runs each named builddir with
 out-of-tree kernel modules (`quectel_MHI`, `quectel_QMI_WWAN`,
 `simcom_QMI_WWAN` — none of which upstream CI builds — and `aw1000-fxs`, the
 SLIC driver) before the long `world` build: no extra cost when it passes
-(stamps are reused), an hour instead of four when a kernel module breaks. `SMOKE=0` skips it. CI uploads `build.log` as an artifact on failure.
+(stamps are reused), an hour instead of four when a kernel module breaks.
+`SMOKE=0` skips it. CI uploads `build.log` as an artifact on failure.
+
+The builder's default `CONFIG_ALL_KMODS=y` is turned off (`aw1000.fragment`):
+with it, `world` compiles every kernel-module package in every feed (~1100
+modules), and any legacy driver that does not track the current kernel API
+fails the build even though it is not in the image. PF_RING 9.2.0
+(`kmod-pf-ring`) is the known casualty on `linux-6.18.60` (sockaddr
+prototype change + `-march=native`). The image ships exactly the selected
+`=y` modules; `ci/preflight.sh` fails if `CONFIG_ALL_KMODS` or
+`kmod-pf-ring`/`libpfring` come back.
 
 Machine: 4 threads, 5.8 GB RAM + 4 GB swap → `-j2`. LTO + mold + GCC 15 make
 `-j4` swap-thrash. `make defconfig` prints harmless recursive-dependency errors
