@@ -1,0 +1,80 @@
+diff --git a/luci-app-netstat/files/etc/config/vnstat b/luci-app-netstat/files/etc/config/vnstat
+deleted file mode 100644
+index 7f37624..0000000
+--- a/luci-app-netstat/files/etc/config/vnstat
++++ /dev/null
+@@ -1,7 +0,0 @@
+-config vnstat
+-	list interface		br-lan
+-	list interface		wwan0_1
+-	list interface		wwan0
+-#	list interface		eth0.1
+-#	option remote		http://example.org/vnstat/
+-#	option symlink		/www/vnstat
+diff --git a/luci-app-netstat/files/etc/uci-defaults/99-vnstat b/luci-app-netstat/files/etc/uci-defaults/99-vnstat
+index ded1807..f086cd0 100644
+--- a/luci-app-netstat/files/etc/uci-defaults/99-vnstat
++++ b/luci-app-netstat/files/etc/uci-defaults/99-vnstat
+@@ -1,44 +1,21 @@
+ #!/bin/sh
+-
+-chmod 644 /www/luci-static/resources/netstat/chart.js
+-
+-RESTART_VNSTAT=0
+-
+-if opkg list-installed | grep -q '^vnstat2'; then
+-    opkg remove vnstat2 && RESTART_VNSTAT=1
+-fi
+-
+-if ! command -v vnstat >/dev/null 2>&1; then
+-    opkg update
+-    opkg install vnstat || exit 1
+-    RESTART_VNSTAT=1
+-fi
+-
+-VNSTAT_BIN="vnstat"
+-
+-mkdir -p /etc/vnstat
+-
+-if [ -f /etc/vnstat.conf ]; then
+-    if ! grep -q '^DatabaseDir "/etc/vnstat"' /etc/vnstat.conf; then
+-        sed -i 's|^DatabaseDir .*|DatabaseDir "/etc/vnstat"|' /etc/vnstat.conf
+-        RESTART_VNSTAT=1
+-    fi
+-fi
+-
+-IFACE="$(ip -4 route list 0/0 | awk '{print $5}' | head -n1)"
+-[ -z "$IFACE" ] && IFACE="wwan0_1"
+-
+-if [ ! -f "/etc/vnstat/$IFACE" ]; then
+-    $VNSTAT_BIN --create -i "$IFACE"
+-    RESTART_VNSTAT=1
++# luci-app-netstat ships only the web UI. vnstat2 (feeds/packages/net/vnstat2)
++# owns /etc/config/vnstat, /etc/init.d/vnstat and /etc/vnstat.conf, so this
++# script must not install or remove anything. The original dotycat version ran
++# `opkg list-installed`, `opkg remove vnstat2` and `opkg install vnstat`, which
++# is wrong on this apk-based image and would delete the daemon that provides
++# the `vnstat` binary this UI graphs. The database directory is set by
++# 95-aw1000-vnstat-dbdir.
++
++chmod 644 /www/luci-static/resources/netstat/chart.js 2>/dev/null
++
++# Seed the interfaces the graphs track, once. vnstat2's init reads this list
++# (config_list_foreach interface) and creates one database per entry.
++if [ -f /etc/config/vnstat ] && [ -z "$(uci -q get vnstat.@vnstat[0].interface)" ]; then
++	for iface in br-lan wwan0_1 wwan0; do
++		uci -q add_list "vnstat.@vnstat[0].interface=$iface"
++	done
++	uci -q commit vnstat
++	/etc/init.d/vnstat restart >/dev/null 2>&1
+ fi
+-
+-if [ -f /etc/init.d/vnstat ]; then
+-    /etc/init.d/vnstat enable
+-    [ $RESTART_VNSTAT -eq 1 ] && /etc/init.d/vnstat restart || /etc/init.d/vnstat start
+-fi
+-
+-CRONLINE="*/2 * * * * root $VNSTAT_BIN --update"
+-grep -qF "$CRONLINE" /etc/crontabs/root || echo "$CRONLINE" >> /etc/crontabs/root
+-
+ exit 0

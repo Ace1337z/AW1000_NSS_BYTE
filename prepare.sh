@@ -38,31 +38,53 @@ chmod 755 prepare.sh build.sh ci/*.sh builder/local/stage-release.sh
 # under openwrt/feeds/ (handled inside prepare-build.sh), these are symlink
 # farms into the bootstrap-pinned src/ checkouts, and GNU patch refuses to
 # write through symlinked directories. Each patch is therefore a git diff
-# against the src checkout repo root (src/<repo>/<path>); we resolve the
-# package's symlink to its real path, derive the repo, and use git apply
-# (idempotent: reverse-check succeeds when already applied).
+# against the src checkout repo root (src/<repo>/<path>) and is applied with
+# git apply (idempotent: a reverse --check means it is already applied).
 PATCH_LOCAL_FEEDS="$PWD/overlay/builder/patches/local-feeds/aw1000"
 shopt -s nullglob
-for p in "$PATCH_LOCAL_FEEDS"/*.patch; do
-	# first file line: "a/<repo-relative-path>"
-	rel="$(awk 'NR==4 {print $2}' "$p" | sed 's#^a/##')"
-	[ -n "$rel" ] || { echo "local-feed patch $(basename "$p") has no file path" >&2; exit 1; }
-	pkg="$(basename "$(dirname "$rel")")"
-	link="$PWD/local-feeds/aw1000/$pkg"
+# Candidate repos are the src/ checkouts the aw1000 feed actually links to.
+# Restricting to those keeps the search unambiguous: a patch header alone
+# cannot name its repo (it may touch several files), and an unlinked checkout
+# can hold an identical copy (e.g. src/passwall-pkgs duplicates the passwall
+# Makefile that src/aw1000_byte ships), which would let a patch "already
+# applied" match the wrong tree.
+CANDIDATE_REPOS=""
+for link in "$PWD"/local-feeds/aw1000/*; do
 	real="$(readlink -f "$link")"
 	case "$real" in
-	"$PWD/src/"*) repo="${real#"$PWD/src/"}"; repo="${repo%%/*}" ;;
-	*) echo "local-feed patch $(basename "$p"): $pkg is not a src/ checkout" >&2; exit 1 ;;
+	"$PWD/src/"*)
+		repo="${real#"$PWD/src/"}"
+		repo="${repo%%/*}"
+		[ -d "$PWD/src/$repo/.git" ] || continue
+		case " $CANDIDATE_REPOS " in *" $repo "*) continue ;; esac
+		CANDIDATE_REPOS="$CANDIDATE_REPOS $repo"
+		;;
 	esac
-	if git -C "$PWD/src/$repo" apply --check -R "$p" 2>/dev/null; then
-		echo "[prepare] skipping $(basename "$p") (already applied)"
-	elif git -C "$PWD/src/$repo" apply --check "$p" 2>/dev/null; then
-		echo "[prepare] applying $(basename "$p") to src/$repo"
-		git -C "$PWD/src/$repo" apply "$p"
-	else
-		echo "local-feed patch $(basename "$p") does not apply to src/$repo" >&2
+done
+[ -n "${CANDIDATE_REPOS# }" ] || { echo "no src/ checkouts linked from local-feeds/aw1000" >&2; exit 1; }
+for p in "$PATCH_LOCAL_FEEDS"/*.patch; do
+	name="$(basename "$p")"
+	matched=0
+	for repo in $CANDIDATE_REPOS; do
+		if git -C "$PWD/src/$repo" apply --check -R "$p" 2>/dev/null; then
+			echo "[prepare] skipping $name (already applied in src/$repo)"
+			matched=1
+			break
+		fi
+		if git -C "$PWD/src/$repo" apply --check "$p" 2>/dev/null; then
+			echo "[prepare] applying $name to src/$repo"
+			git -C "$PWD/src/$repo" apply "$p" || {
+				echo "local-feed patch $name failed to apply to src/$repo" >&2
+				exit 1
+			}
+			matched=1
+			break
+		fi
+	done
+	[ "$matched" = 1 ] || {
+		echo "local-feed patch $name applies to no linked src/ checkout (stale against pin):$CANDIDATE_REPOS" >&2
 		exit 1
-	fi
+	}
 done
 shopt -u nullglob
 

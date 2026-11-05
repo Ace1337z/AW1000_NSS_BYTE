@@ -175,29 +175,80 @@ fi
 head2 "local-feed patches"
 LPF="$ROOT/builder/patches/local-feeds"
 if [ -d "$LPF" ]; then
+	# Candidate repos: the src/ checkouts the aw1000 feed links to (same set
+	# prepare.sh uses). A patch header cannot name its repo because a patch may
+	# touch several files, and an unlinked checkout can hold an identical copy.
+	CANDIDATE_REPOS=""
+	for link in "$ROOT"/local-feeds/aw1000/*; do
+		real="$(readlink -f "$link")"
+		case "$real" in
+		"$ROOT/src/"*)
+			repo="${real#"$ROOT/src/"}"
+			repo="${repo%%/*}"
+			[ -d "$ROOT/src/$repo/.git" ] || continue
+			case " $CANDIDATE_REPOS " in *" $repo "*) continue ;; esac
+			CANDIDATE_REPOS="$CANDIDATE_REPOS $repo"
+			;;
+		esac
+	done
 	lpn=0
 	while IFS= read -r p; do
 		lpn=$((lpn + 1))
-		# src-link feed: local-feeds/aw1000 is a symlink farm into the
-		# bootstrap-pinned src/ checkouts, not a git checkout under
-		# openwrt/feeds/. Resolve the package symlink, then git-apply
-		# against the src repo (same logic as prepare.sh).
-		rel="$(awk 'NR==4 {print $2}' "$p" | sed 's#^a/##')"
-		pkg="$(basename "$(dirname "$rel")")"
-		real="$(readlink -f "$ROOT/local-feeds/aw1000/$pkg")"
-		case "$real" in
-		"$ROOT/src/"*) repo="${real#"$ROOT/src/"}"; repo="${repo%%/*}" ;;
-		*) bad "$(basename "$p"): $pkg is not a src/ checkout"; continue ;;
+		name="$(basename "$p")"
+		state=""
+		for repo in $CANDIDATE_REPOS; do
+			if git -C "$ROOT/src/$repo" apply --check -R "$p" 2>/dev/null; then
+				state="applied:$repo"
+				break
+			fi
+			if git -C "$ROOT/src/$repo" apply --check "$p" 2>/dev/null; then
+				state="pending:$repo"
+				break
+			fi
+		done
+		case "$state" in
+		applied:*) : ;; # applied, as expected after prepare.sh
+		pending:*) bad "$name not applied to src/${state#pending:} (prepare.sh should have)" ;;
+		*) bad "$name applies to no linked src/ checkout (stale against pin):$CANDIDATE_REPOS" ;;
 		esac
-		if git -C "$ROOT/src/$repo" apply --check -R "$p" 2>/dev/null; then
-			: # applied, as expected after prepare.sh
-		elif git -C "$ROOT/src/$repo" apply --check "$p" 2>/dev/null; then
-			bad "$(basename "$p") not applied (prepare.sh should have done it)"
-		else
-			bad "$(basename "$p") neither applies nor reverses - feed moved?"
-		fi
 	done < <(find "$LPF" -type f -name '*.patch' | sort)
 	ok "$lpn local-feed patches verified against pinned src checkouts"
+fi
+
+# The image build ends with package/install, where apk refuses an invalid
+# version string or two packages owning the same file - both fully knowable
+# from the package metadata alone, but only after every package has compiled
+# (~3 h). ci/check-packages.py evaluates exactly those two properties from
+# openwrt/tmp/.packageinfo, so a regression fails here in about a second.
+head2 "package metadata (apk)"
+if [ ! -f "$ROOT/ci/check-packages.py" ]; then
+	bad "ci/check-packages.py missing"
+elif [ ! -f "$ROOT/ci/selftest-check-packages.sh" ]; then
+	bad "ci/selftest-check-packages.sh missing"
+elif bash "$ROOT/ci/selftest-check-packages.sh"; then
+	ok "check-packages.py self-test passed"
+else
+	bad "check-packages.py self-test failed (the gate may no longer catch a regression)"
+fi
+if [ -f "$ROOT/ci/check-packages.py" ] && [ ! -f "$ROOT/openwrt/tmp/.packageinfo" ]; then
+	bad "openwrt/tmp/.packageinfo missing - the apk metadata gate cannot run (prepare.sh runs 'make defconfig', which writes it)"
+elif [ -f "$ROOT/ci/check-packages.py" ]; then
+	pm_out="$(python3 "$ROOT/ci/check-packages.py" "$ROOT" 2>&1)"
+	pm_rc=$?
+	pm_fails=0
+	while IFS= read -r line; do
+		[ -n "$line" ] || continue
+		case "$line" in
+		FAIL:*) bad "${line#FAIL: }"; pm_fails=$((pm_fails + 1)) ;;
+		WARN:*) warn "${line#WARN: }" ;;
+		*) ok "$line" ;;
+		esac
+	done <<<"$pm_out"
+	# A non-zero exit without a FAIL line means the checker itself broke; do
+	# not report it twice when it did print the reason.
+	if [ "$pm_rc" != 0 ] && [ "$pm_fails" = 0 ]; then
+		bad "ci/check-packages.py exited $pm_rc"
+	fi
 fi
 
 head2 "overlay staged into openwrt/files"

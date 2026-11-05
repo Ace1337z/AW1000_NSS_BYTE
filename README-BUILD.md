@@ -17,7 +17,8 @@ AW1000_NSS_BYTE/
 │   │                                        modem MTU, uplink recreate)
 │   ├── patches/local-feeds/aw1000/          src-link feed patches (git apply
 │   │                                        against the pinned src checkouts:
-│   │                                        passwall v1 apk version)
+│   │                                        passwall v1 apk version,
+│   │                                        netstat/vnstat2 file ownership)
 │   ├── local/aw1000.fragment                local config: AW1000 + packages
 │   ├── local/stage-release.sh               BYTE <version> release staging
 │   └── local/reference-patches/             not applied: passwall2 geodata diff
@@ -25,7 +26,8 @@ AW1000_NSS_BYTE/
 ├── src/                upstream clones the feed symlinks point at
 ├── VERSION             release version, 1.0.x (first 1.0.1)
 ├── releases/           BYTE-<version>/ images + RELEASE.md (created by build)
-├── ci/                 bootstrap.sh (pinned clones), links.sh, preflight.sh
+├── ci/                 bootstrap.sh (pinned clones), links.sh, preflight.sh,
+│                       check-packages.py (+ self-test), release helpers
 ├── prepare.sh          regenerate feeds + .config (idempotent)
 └── build.sh            make download && make -j2, then stage the release
 ```
@@ -296,6 +298,16 @@ not advertise zstd, zram-swap keeps its built-in default (lzo-rle).
   node and its children disappear). Unhide:
   `mkdir -p /etc/aw1000 && touch /etc/aw1000/show-vnstat2`.
   The menu still exists in the image; nothing is removed at build time.
+- Package ownership: the dotycat `luci-app-netstat` ships only the web UI. Its
+  upstream copy also installed `files/etc/config/vnstat` and its uci-defaults
+  ran `opkg remove vnstat2` / `opkg install vnstat`, which (a) collided with the
+  file `vnstat2` owns (apk aborts the whole image with
+  `trying to overwrite etc/config/vnstat owned by vnstat2`) and (b) would have
+  deleted the daemon on an apk image. `patches/local-feeds/aw1000/0002-luci-app-netstat-vnstat2-ownership.patch`
+  drops the config file and rewrites the script to seed `br-lan wwan0_1 wwan0`
+  into `vnstat.@vnstat[0].interface` once. `vnstat2` owns
+  `/etc/config/vnstat`, `/etc/init.d/vnstat` and `/etc/vnstat.conf`; this UI
+  only reads the databases.
 
 ## Build
 ```sh
@@ -312,6 +324,36 @@ transport file (`*.b64`, `*.orig`, `*.rej`) leaked into the staged rootfs. It
 exits non-zero on any failure and runs in CI before the compile, so a broken
 definition fails in seconds instead of hours. It never compiles anything —
 `./build.sh` (or the workflow) is the only step that does.
+
+The last gate is `ci/check-packages.py`, which evaluates the two things apk
+rejects at the very end of the image build (after every package has compiled,
+~3 h in) straight from `openwrt/tmp/.packageinfo`, the index `prepare.sh`
+writes via `make defconfig`:
+
+- **version grammar** — apk accepts `<version>` plus an optional `-r<digits>`
+  revision and nothing else containing a dash, so opkg-style `4.66-8` aborts
+  the build while `4.66-r8` is fine. (`<LINUX_VERSION>-r` templates are
+  skipped; `kernel.mk` fills them in at build time.)
+- **file ownership** — two selected packages installing the same path:
+  `ERROR: pkg-a-…: trying to overwrite etc/config/vnstat owned by pkg-b-…`.
+  The file list of each package is derived from its `Package/<name>/install`
+  block, from `feeds/luci/luci.mk` for LuCI apps (`luasrc/`, `ucode/`,
+  `htdocs/`, `root/`) and from the same file for `luci-i18n-*` (one
+  uci-defaults file plus one `.lmo` per `po/<lang>/*.po`, with the
+  `LUCI_LC_ALIAS` mapping, e.g. `zh_Hans` → `zh-cn`). Directories are shared
+  legitimately and are not compared.
+  Packages whose file list comes from a shared Makefile template (kmods,
+  toolchain/ruby/ucode libs, coreutils applets — 183 of 431) cannot be
+  enumerated statically. They are reported as one `warn` line, and none of
+  them ships `files/etc/config`, `files/etc/init.d`, `files/etc/uci-defaults`
+  or `files/usr/lib/lua`, i.e. exactly the trees that can collide; every
+  package that does ship those is checked.
+
+`ci/selftest-check-packages.sh` runs from preflight first: a synthetic
+`tmp/.packageinfo` must pass when clean and must be rejected for a shared file
+and for an opkg-style version, so the gate cannot silently stop detecting the
+errors it exists for. Together the two run in about a second and both fail
+*inside* `Pre-flight checks* — before `Build image`, never after it.
 
 Build verbosity is not cosmetic. With no `V=` on the make command line,
 `include/verbose.mk` runs every sub-make as `>/dev/null 2>&1`, so a failing
