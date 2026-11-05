@@ -22,6 +22,7 @@ AW1000_NSS_BYTE/
 ├── src/                upstream clones the feed symlinks point at
 ├── VERSION             release version, 1.0.x (first 1.0.1)
 ├── releases/           BYTE-<version>/ images + RELEASE.md (created by build)
+├── ci/                 bootstrap.sh (pinned clones), links.sh, preflight.sh
 ├── prepare.sh          regenerate feeds + .config (idempotent)
 └── build.sh            make download && make -j2, then stage the release
 ```
@@ -278,9 +279,19 @@ not advertise zstd, zram-swap keeps its built-in default (lzo-rle).
 ## Build
 ```sh
 cd /home/ace/AW1000_NSS_BYTE
-./prepare.sh          # only when feeds/config changed (already run)
-./build.sh            # JOBS=2 default; JOBS=1 for a readable failure
+./prepare.sh          # feeds + .config + overlay staging (idempotent)
+./ci/preflight.sh     # seconds: symbols, patches, staging, script/JSON syntax
+./build.sh            # the only step that compiles; JOBS=2 default
 ```
+`ci/preflight.sh` is the cheap gate: it checks that every fragment symbol
+survived into `.config`, that each builder patch is applied cleanly to the
+pinned feed, that every overlay file (and the decoded vendor blob, md5
+`3778fa32…`) reached `openwrt/files` with the right mode, and that no
+transport file (`*.b64`, `*.orig`, `*.rej`) leaked into the staged rootfs. It
+exits non-zero on any failure and runs in CI before the compile, so a broken
+definition fails in seconds instead of hours. It never compiles anything —
+`./build.sh` (or the workflow) is the only step that does.
+
 Machine: 4 threads, 5.8 GB RAM + 4 GB swap → `-j2`. LTO + mold + GCC 15 make
 `-j4` swap-thrash. `make defconfig` prints harmless recursive-dependency errors
 (qt5base-gui, fwknopd, squeezelite-custom).

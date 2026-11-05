@@ -17,6 +17,10 @@ if [ ! -f "$FXS_DIR/si3226x_patch.bin" ]; then
 	base64 -d "$FXS_DIR/si3226x_patch.bin.b64" >"$FXS_DIR/si3226x_patch.bin"
 fi
 chmod 644 "$FXS_DIR/si3226x_patch.bin"
+# The base64 file is a transport detail for the repo, not image content: the
+# copy under builder/ is what prepare-build.sh stages into openwrt/files, so
+# drop it here or it ends up in the rootfs next to the decoded blob.
+rm -f "$FXS_DIR/si3226x_patch.bin.b64"
 
 # Executable bits do not survive every transport (GitHub's contents API commits
 # everything as 100644), and OpenWrt copies these files into the image as-is: a
@@ -41,3 +45,12 @@ src-git luci https://github.com/JuliusBairaktaris/luci.git;luci-app-ppe-qos
 src-git qmodem https://github.com/FUjr/QModem.git^b4effcdaa7f73b26b27f01a8cca3c31f8e98be26
 src-link aw1000 $PWD/local-feeds/aw1000" \
 bash builder/scripts/prepare-build.sh
+
+# openwrt/files/ is a persistent staging dir: prepare-build.sh copies into it
+# but never prunes, so a file removed from the overlay survives there and ships
+# in the next image. Drop repo-transport leftovers after every prepare.
+find openwrt/files -type f \( -name '*.b64' -o -name '*.orig' -o -name '*.rej' \) -delete 2>/dev/null || true
+if [ -f openwrt/files/etc/fxs/si3226x_patch.bin.b64 ]; then
+	echo "b64 blob still staged in openwrt/files" >&2
+	exit 1
+fi

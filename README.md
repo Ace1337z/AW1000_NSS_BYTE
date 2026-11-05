@@ -22,6 +22,7 @@ not tracked here.
 | `build.sh` | `make download`, `make`, then stages `releases/BYTE-<version>/` |
 | `ci/bootstrap.sh` | clones `openwrt`, `builder`, `src/*` at the pinned commits |
 | `ci/links.sh` | creates the `local-feeds/aw1000` links into `src/` |
+| `ci/preflight.sh` | fast consistency gate: config symbols, patch application, overlay staging, script/JSON syntax (no compilation) |
 | `overlay/builder/` | our additions to Qualcommax_NSS_Builder (device files, patches, config fragment) |
 | `local-feeds/aw1000/` | vendored feed packages (dashboard, BYTE panel, passwall2) |
 | `.github/workflows/build.yml` | CI build + release publish |
@@ -31,7 +32,8 @@ not tracked here.
 ```sh
 ./ci/bootstrap.sh      # pinned clones: openwrt, builder, src/*
 ./prepare.sh           # feeds + .config + overlay; fails on dropped symbols
-JOBS=2 ./build.sh      # hours on a small box; image in openwrt/bin/targets/...
+./ci/preflight.sh      # seconds, no compilation: symbols, patches, staging, syntax
+JOBS=2 ./build.sh      # the only step that compiles; image in openwrt/bin/targets/...
 ```
 
 Result: `releases/BYTE-1.0.1/BYTE-1.0.1-arcadyan_aw1000-squashfs-sysupgrade.bin`
