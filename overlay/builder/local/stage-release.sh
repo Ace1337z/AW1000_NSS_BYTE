@@ -94,6 +94,10 @@ OpenWrt ppe-nss (NSS offload) for the Arcadyan AW1000, built from this tree.
   PPE, Wi-Fi uses the NSS cores.
 - Wi-Fi: SSID \`BYTE\`, 2.4 + 5 GHz, open, country \`US\`.
 - Login: \`root\` with no password, SSH and LuCI included (change it).
+- Hostname \`BYTE\`, description \`BYTE by ACE\`, BYTE login banner.
+- LuCI theme: **Footstrap is the default** (\`luci.main.mediaurlbase\` set at
+  first boot by \`/etc/uci-defaults/93-aw1000-theme\`); Bootstrap stays
+  installed as a fallback.
 - Dashboard: mobile, thermal and storage cards; the NSS card is replaced by
   Storage; the bottom detail tabs and the layout editor are hidden.
 - BYTE panel under **Services**: AdGuard Home setup/status, DNS chain, system
