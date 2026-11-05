@@ -87,6 +87,13 @@ sysupgrade image, `sha256sums` and `RELEASE.md`, and fails if the image is
 missing or the release carries no sysupgrade asset.
 
 ## Notes
+- Offload: Wi-Fi runs on the NSS cores (`nss-wifi-drv`) and fw4 flowtable
+  offload is forced on. The modem data path is **not** offloaded — its NSS
+  drivers (`kmod-rmnet-nss`, `kmod-qmi_wwan_q_nss`, `kmod-pcie_mhi_nss`) need
+  `kmod-qca-nss-drv`, which this tree does not ship. Wired/modem traffic stays
+  on the CPU; throughput is bounded by that.
+- Kernel is `linux-6.18.60`; the out-of-tree modem and SLIC modules are
+  smoke-built in CI before the full build so a kernel-API break fails fast.
 
 - `si3226x_patch.bin` is the Skyworks ProSLIC DSP patch used by the stock
   firmware. It is stored base64 (`si3226x_patch.bin.b64`) so the repository stays
