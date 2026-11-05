@@ -251,10 +251,22 @@ def resolve_cmd(src, dst, pkgdir, known_dirs):
     dir_hint = dst.endswith("/")
     dst_n = norm(dst) if dst else "/"
 
-    # PKG_BUILD_DIR/<sub>/... mirrors <pkgdir>/<sub>/... in the source tree.
-    m = re.match(r"^\$\(PKG_BUILD_DIR\)/([^/]+)(/.*)?$", src)
-    if m and not any(c in m.group(1) for c in "*?["):
-        src = os.path.join(pkgdir, m.group(1)) + (m.group(2) or "")
+    # PKG_BUILD_DIR/<sub>/... mirrors <pkgdir>/<sub>/... in the source tree,
+    # so an unchanged copy (e.g. ./files or an extracted tarball) can be
+    # enumerated for real. When the path does not exist there, it is a build
+    # product: the installed name is still known (cp keeps the basename), and
+    # that is enough for the collision check.
+    from_builddir = False
+    m = re.match(r"^\$\((PKG_BUILD_DIR|PKG_INSTALL_DIR)\)/([^/]+)(/.*)?$", src)
+    if m and not any(c in m.group(2) for c in "*?["):
+        if m.group(1) == "PKG_BUILD_DIR":
+            # An unchanged copy: enumerate the real tree.
+            src = os.path.join(pkgdir, m.group(2)) + (m.group(3) or "")
+        else:
+            # PKG_INSTALL_DIR is $(STAGING_DIR)/usr, not under pkgdir: keep the
+            # path relative and let the basename fallback below resolve it.
+            src = m.group(2) + (m.group(3) or "")
+        from_builddir = True
     if src.startswith("$(") or "${" in src:
         return []
 
@@ -280,6 +292,14 @@ def resolve_cmd(src, dst, pkgdir, known_dirs):
         if into_dir:
             return [norm(dst_n.rstrip("/") + "/" + os.path.basename(abspath))]
         return [dst_n]
+
+    if from_builddir:
+        # cp/install keep the source basename when the destination is a dir.
+        base = os.path.basename(src.rstrip("/"))
+        if base and not any(c in base for c in "*?["):
+            if into_dir:
+                return [norm(dst_n.rstrip("/") + "/" + base)]
+            return [dst_n]
 
     return []
 
