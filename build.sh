@@ -17,24 +17,61 @@ fi
 OPENWRT="$PWD/openwrt"
 JOBS="${JOBS:-2}"          # 4 threads / 5.8 GB RAM: 2 is the safe parallelism, LTO+mold eats RAM
 LOG="$PWD/build.log"
+# SMOKE=1 compiles tools + toolchain + kernel + the vendor MHI module before
+# the long world build. It costs nothing extra when it passes (the stamps are
+# reused) and makes a broken kernel module fail in about an hour instead of
+# four. SMOKE=0 skips it.
+SMOKE="${SMOKE:-1}"
 
 cd "$OPENWRT"
 export TZ=UTC LC_ALL=C
 export KBUILD_BUILD_USER=builder KBUILD_BUILD_HOST=aw1000-nss
 export SOURCE_DATE_EPOCH="$(git show -s --format=%ct HEAD 2>/dev/null || date +%s)"
 mkdir -p dl
+: >"$LOG"
 
+# Verbosity matters more than it looks: with no V=, include/verbose.mk runs
+# every sub-make as
+#   cmd() { >/dev/null 2>&1 make -s "$@" </dev/null || { echo "re-run with V=s"; false; }; }
+# so ALL compiler output -- including the real error -- is thrown away and the
+# log only says "package/X failed to build". V=s switches SUBMAKE back to
+# $(MAKE) -w, which keeps the compiler diagnostics. V=sc also echoes commands.
 echo "== download =="
-make -j"$JOBS" download || { echo "download failed (rerun: make -j1 download V=s)" >&2; exit 1; }
+make -j"$JOBS" V=s download || { echo "download failed; rerun: make -j1 V=s download" >&2; exit 1; }
+
+if [ "$SMOKE" != 0 ]; then
+    echo "== smoke: tools, toolchain, kernel, then the vendor MHI module (V=sc) =="
+    for goal in tools/install toolchain/install target/compile \
+                package/feeds/qmodem/quectel_MHI/compile; do
+        echo "-- smoke: $goal"
+        make -j"$JOBS" V=sc "$goal" 2>&1 | tee -a "$LOG"
+    done
+    echo "== smoke ok =="
+fi
 
 echo "== build (jobs=$JOBS) =="
 set +e
-make -j"$JOBS" 2>&1 | tee "$LOG"
+make -j"$JOBS" V=s 2>&1 | tee -a "$LOG"
 rc=${PIPESTATUS[0]}
 set -e
 if [ "$rc" -ne 0 ]; then
     echo "BUILD FAILED rc=$rc — full log: $LOG" >&2
-    echo "Retry the failing package verbosely: make V=s package/feeds/<feed>/<pkg>/compile" >&2
+    # "ERROR: package/feeds/qmodem/quectel_MHI failed to build." names the
+    # builddir that broke. Rebuild it alone at full verbosity so the compiler
+    # error is in this run's log instead of the next one.
+    fails="$(grep -oE 'ERROR: [^ ]+ failed to build' "$LOG" | sed -E 's/^ERROR: //' | sort -u || true)"
+    if [ -n "$fails" ]; then
+        echo "== verbose re-run of the failing builddirs (V=sc) =="
+        for p in $fails; do
+            echo "-- $p: clean"
+            make -j1 V=sc "$p/clean" 2>&1 | tee -a "$LOG" || true
+            echo "-- $p: compile (real error follows)"
+            make -j1 V=sc "$p/compile" 2>&1 | tee -a "$LOG" || true
+        done
+    else
+        echo "no failing builddir named in the log; last 100 lines:" >&2
+        tail -n 100 "$LOG" >&2 || true
+    fi
     exit "$rc"
 fi
 

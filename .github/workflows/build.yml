@@ -94,6 +94,21 @@ jobs:
       - name: Build image
         run: ./build.sh
 
+      # build.sh drives make with V=s (default verbosity sends every sub-make
+      # to /dev/null, which is how a 4 h run failed with "package/X failed to
+      # build" and no compiler output at all) and re-runs the failing builddir
+      # with V=sc. Keep that log even when the job dies.
+      - name: Upload build log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: aw1000-nss-build-log-${{ github.run_number }}
+          path: |
+            build.log
+            openwrt/.config
+          if-no-files-found: warn
+          retention-days: 14
+
       - name: Verify image and release metadata
         run: |
           set -euo pipefail

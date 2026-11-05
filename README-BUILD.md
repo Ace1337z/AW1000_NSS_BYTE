@@ -292,6 +292,18 @@ exits non-zero on any failure and runs in CI before the compile, so a broken
 definition fails in seconds instead of hours. It never compiles anything —
 `./build.sh` (or the workflow) is the only step that does.
 
+Build verbosity is not cosmetic. With no `V=` on the make command line,
+`include/verbose.mk` runs every sub-make as `>/dev/null 2>&1`, so a failing
+package reports only `ERROR: package/X failed to build` and the compiler
+diagnostic is discarded - which is exactly how a 4 h CI run failed without
+telling us why. `build.sh` therefore runs `make V=s` (keeps the compiler
+output) and, when the build fails, re-runs each named builddir with
+`make V=sc <builddir>/{clean,compile}` so the real error lands in the same run.
+`SMOKE=1` (default) compiles tools, toolchain, kernel and the vendor
+`quectel_MHI` module before the long `world` build: no extra cost when it
+passes (stamps are reused), an hour instead of four when a kernel module
+breaks. `SMOKE=0` skips it. CI uploads `build.log` as an artifact on failure.
+
 Machine: 4 threads, 5.8 GB RAM + 4 GB swap → `-j2`. LTO + mold + GCC 15 make
 `-j4` swap-thrash. `make defconfig` prints harmless recursive-dependency errors
 (qt5base-gui, fwknopd, squeezelite-custom).

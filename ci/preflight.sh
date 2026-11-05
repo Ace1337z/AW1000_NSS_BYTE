@@ -61,7 +61,7 @@ else
 	warn "python3-yaml absent, workflow not parsed"
 fi
 
-head2 "shell syntax"
+head2 "shell syntax and build verbosity"
 shell_n=0
 while IFS= read -r f; do
 	# Binary files (the decoded vendor blob lives in the tree) would trip the
@@ -78,6 +78,16 @@ while IFS= read -r f; do
 done < <(find "$ROOT/overlay" "$ROOT/local-feeds" "$ROOT/ci" "$ROOT/builder/local" \
 		-type f ! -name '*.patch' ! -name '*.b64' 2>/dev/null | sort)
 ok "$shell_n shell scripts parsed"
+# include/verbose.mk drops every sub-make's stdout+stderr into /dev/null when
+# the make invocation has no V= in it, which hides the compiler error behind
+# "package/X failed to build". Both the world build and the verbose failure
+# re-run must therefore pass an explicit V=.
+grep -qE 'make -j"\$JOBS" V=s' "$ROOT/build.sh" &&
+	ok "build.sh runs make with V=s" || bad "build.sh must pass V=s (silent make hides compiler errors)"
+grep -qE 'make -j1 V=sc "\$p/compile"' "$ROOT/build.sh" &&
+	ok "build.sh re-runs failing builddirs with V=sc" || bad "build.sh lost the verbose failure re-run"
+grep -q 'Upload build log on failure' "$ROOT/.github/workflows/build.yml" &&
+	ok "workflow keeps build.log on failure" || bad "workflow does not upload build.log on failure"
 
 head2 "json syntax"
 json_n=0
