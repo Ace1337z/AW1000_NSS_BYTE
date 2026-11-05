@@ -1,0 +1,15 @@
+diff --git a/packages/luci-app-passwall/Makefile b/packages/luci-app-passwall/Makefile
+index 5d6d848..b7d2378 100644
+--- a/packages/luci-app-passwall/Makefile
++++ b/packages/luci-app-passwall/Makefile
+@@ -30,8 +30,8 @@
+ include $(TOPDIR)/rules.mk
+ 
+ PKG_NAME:=luci-app-passwall
+-PKG_VERSION:=4.66-8
+-PKG_RELEASE:=
++PKG_VERSION:=4.66
++PKG_RELEASE:=8
+ 
+ PKG_CONFIG_DEPENDS:= \
+ 	CONFIG_PACKAGE_$(PKG_NAME)_Iptables_Transparent_Proxy \

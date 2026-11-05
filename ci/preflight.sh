@@ -172,6 +172,34 @@ if [ -d "$PATCH_FEEDS" ]; then
 	ok "$patch_n builder patches verified against pinned feeds"
 fi
 
+head2 "local-feed patches"
+LPF="$ROOT/builder/patches/local-feeds"
+if [ -d "$LPF" ]; then
+	lpn=0
+	while IFS= read -r p; do
+		lpn=$((lpn + 1))
+		# src-link feed: local-feeds/aw1000 is a symlink farm into the
+		# bootstrap-pinned src/ checkouts, not a git checkout under
+		# openwrt/feeds/. Resolve the package symlink, then git-apply
+		# against the src repo (same logic as prepare.sh).
+		rel="$(awk 'NR==4 {print $2}' "$p" | sed 's#^a/##')"
+		pkg="$(basename "$(dirname "$rel")")"
+		real="$(readlink -f "$ROOT/local-feeds/aw1000/$pkg")"
+		case "$real" in
+		"$ROOT/src/"*) repo="${real#"$ROOT/src/"}"; repo="${repo%%/*}" ;;
+		*) bad "$(basename "$p"): $pkg is not a src/ checkout"; continue ;;
+		esac
+		if git -C "$ROOT/src/$repo" apply --check -R "$p" 2>/dev/null; then
+			: # applied, as expected after prepare.sh
+		elif git -C "$ROOT/src/$repo" apply --check "$p" 2>/dev/null; then
+			bad "$(basename "$p") not applied (prepare.sh should have done it)"
+		else
+			bad "$(basename "$p") neither applies nor reverses - feed moved?"
+		fi
+	done < <(find "$LPF" -type f -name '*.patch' | sort)
+	ok "$lpn local-feed patches verified against pinned src checkouts"
+fi
+
 head2 "overlay staged into openwrt/files"
 if [ -d "$OVERLAY_DEV" ] && [ -d "$STAGED" ]; then
 	miss=0

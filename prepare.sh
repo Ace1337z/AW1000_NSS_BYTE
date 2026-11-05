@@ -34,6 +34,38 @@ chmod 755 prepare.sh build.sh ci/*.sh builder/local/stage-release.sh
 # local-feeds/aw1000 links into the bootstrap-pinned src/ checkouts.
 ./ci/links.sh
 
+# Apply patches to the src-link feeds (local-feeds/aw1000). Unlike the feeds
+# under openwrt/feeds/ (handled inside prepare-build.sh), these are symlink
+# farms into the bootstrap-pinned src/ checkouts, and GNU patch refuses to
+# write through symlinked directories. Each patch is therefore a git diff
+# against the src checkout repo root (src/<repo>/<path>); we resolve the
+# package's symlink to its real path, derive the repo, and use git apply
+# (idempotent: reverse-check succeeds when already applied).
+PATCH_LOCAL_FEEDS="$PWD/overlay/builder/patches/local-feeds/aw1000"
+shopt -s nullglob
+for p in "$PATCH_LOCAL_FEEDS"/*.patch; do
+	# first file line: "a/<repo-relative-path>"
+	rel="$(awk 'NR==4 {print $2}' "$p" | sed 's#^a/##')"
+	[ -n "$rel" ] || { echo "local-feed patch $(basename "$p") has no file path" >&2; exit 1; }
+	pkg="$(basename "$(dirname "$rel")")"
+	link="$PWD/local-feeds/aw1000/$pkg"
+	real="$(readlink -f "$link")"
+	case "$real" in
+	"$PWD/src/"*) repo="${real#"$PWD/src/"}"; repo="${repo%%/*}" ;;
+	*) echo "local-feed patch $(basename "$p"): $pkg is not a src/ checkout" >&2; exit 1 ;;
+	esac
+	if git -C "$PWD/src/$repo" apply --check -R "$p" 2>/dev/null; then
+		echo "[prepare] skipping $(basename "$p") (already applied)"
+	elif git -C "$PWD/src/$repo" apply --check "$p" 2>/dev/null; then
+		echo "[prepare] applying $(basename "$p") to src/$repo"
+		git -C "$PWD/src/$repo" apply "$p"
+	else
+		echo "local-feed patch $(basename "$p") does not apply to src/$repo" >&2
+		exit 1
+	fi
+done
+shopt -u nullglob
+
 OPENWRT_DIR="$PWD/openwrt" \
 BUILDER_REPO="$PWD/builder" \
 VARIANT=ppe-nss \

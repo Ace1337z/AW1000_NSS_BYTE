@@ -15,6 +15,9 @@ AW1000_NSS_BYTE/
 │   ├── patches/feeds/ppe-nss/               feed patches (TTL, xray pin, sqm,
 │   │                                        dashboard tabs, qmodem offload,
 │   │                                        modem MTU, uplink recreate)
+│   ├── patches/local-feeds/aw1000/          src-link feed patches (git apply
+│   │                                        against the pinned src checkouts:
+│   │                                        passwall v1 apk version)
 │   ├── local/aw1000.fragment                local config: AW1000 + packages
 │   ├── local/stage-release.sh               BYTE <version> release staging
 │   └── local/reference-patches/             not applied: passwall2 geodata diff
@@ -92,6 +95,12 @@ Notes:
   (`builder/patches/feeds/ppe-nss/packages/0002-xray-core-pin-26.3.27.patch`).
 - `luci-app-passwall` (v1) ships **disabled** (repo design: `global.enabled=0`,
   no rc.d link), so it cannot fight passwall2 over port 53.
+- The image is packaged with **apk**, whose version grammar requires the
+  `-r<N>` revision suffix: `4.66-8` (opkg style) is rejected with
+  `ERROR: info field 'version' has invalid value`. passwall v1 is patched to
+  `PKG_VERSION:=4.66` / `PKG_RELEASE:=8` →
+  `4.66-r8`
+  (`builder/patches/local-feeds/aw1000/0001-passwall-v1-apk-version.patch`).
 - `luci-app-netstat` needs `vnstat`; `vnstat2` `PROVIDES:=vnstat` satisfies it.
 - theme: **Footstrap is the default**. `luci-theme-footstrap` is installed, but
   its own `/etc/uci-defaults/30_luci-theme-footstrap` cannot select itself:
