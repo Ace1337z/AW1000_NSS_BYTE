@@ -1,0 +1,49 @@
+diff --git a/driver/quectel_MHI/Makefile b/driver/quectel_MHI/Makefile
+index f0cab01..c22bf81 100755
+--- a/driver/quectel_MHI/Makefile
++++ b/driver/quectel_MHI/Makefile
+@@ -31,6 +31,15 @@ EXTRA_CFLAGS+= \
+ 	-Wno-missing-prototypes \
+ 	-Wno-missing-declarations
+ 
++# mhi_netdev_quectel.c references rmnet_nss_callbacks once CONFIG_QCA_NSS_DRV
++# is set. That symbol is EXPORT_SYMBOL()'d by kmod-rmnet-nss, which in turn
++# needs kmod-qca-nss-drv and NSS_DRV_RMNET_ENABLE. Only enable the NSS data
++# hook when the module is really part of the build; otherwise modpost fails
++# with: ERROR: modpost: "rmnet_nss_callbacks" [pcie_mhi.ko] undefined!
++ifeq ($(CONFIG_PACKAGE_kmod-rmnet-nss),y)
++EXTRA_CFLAGS+= -DCONFIG_MHI_RMNET_NSS
++endif
++
+ MAKE_OPTS:= \
+ 	ARCH="$(LINUX_KARCH)" \
+ 	CROSS_COMPILE="$(TARGET_CROSS)" \
+diff --git a/driver/quectel_MHI/src/devices/mhi_netdev_quectel.c b/driver/quectel_MHI/src/devices/mhi_netdev_quectel.c
+index 1294cbc..27daffd 100644
+--- a/driver/quectel_MHI/src/devices/mhi_netdev_quectel.c
++++ b/driver/quectel_MHI/src/devices/mhi_netdev_quectel.c
+@@ -65,13 +65,23 @@ struct rmnet_nss_cb {
+ static struct rmnet_nss_cb __read_mostly *nss_cb = NULL;
+ #if defined(CONFIG_PINCTRL_IPQ807x) || defined(CONFIG_PINCTRL_IPQ5018) || defined(CONFIG_PINCTRL_IPQ8074)
+ //#ifdef CONFIG_RMNET_DATA //spf12.x have no macro defined, just for spf11.x
++/* CONFIG_QCA_NSS_DRV also pulls in nss_cb -> rmnet_nss_callbacks, which only
++ * kmod-rmnet-nss EXPORT_SYMBOL()s. That module needs kmod-qca-nss-drv and
++ * NSS_DRV_RMNET_ENABLE; where the tree ships neither, the reference stays
++ * unresolved and modpost breaks the build with
++ *   ERROR: modpost: "rmnet_nss_callbacks" [pcie_mhi.ko] undefined!
++ * The package Makefile passes -DCONFIG_MHI_RMNET_NSS only when kmod-rmnet-nss
++ * is selected, so the hook compiles in exactly where the symbol exists.
++ */
++#ifdef CONFIG_MHI_RMNET_NSS
+ #define CONFIG_QCA_NSS_DRV
++extern struct rmnet_nss_cb *rmnet_nss_callbacks __rcu __read_mostly;
++#endif
+ #define CONFIG_USE_RMNET_DATA_FOR_SKIP_MEMCPY
+ /* define at qca/src/linux-4.4/drivers/net/ethernet/qualcomm/rmnet/rmnet_config.c */ //for spf11.x
+ /* define at qsdk/qca/src/datarmnet/core/rmnet_config.c */ //for spf12.x
+ /* set at qsdk/qca/src/data-kernel/drivers/rmnet-nss/rmnet_nss.c */
+ /* need add DEPENDS:= kmod-rmnet-core in feeds/makefile */
+-extern struct rmnet_nss_cb *rmnet_nss_callbacks __rcu __read_mostly;
+ //#endif
+ #endif
+ 

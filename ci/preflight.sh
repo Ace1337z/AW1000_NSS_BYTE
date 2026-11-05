@@ -88,6 +88,14 @@ grep -qE 'make -j1 V=sc "\$p/compile"' "$ROOT/build.sh" &&
 	ok "build.sh re-runs failing builddirs with V=sc" || bad "build.sh lost the verbose failure re-run"
 grep -q 'Upload build log on failure' "$ROOT/.github/workflows/build.yml" &&
 	ok "workflow keeps build.log on failure" || bad "workflow does not upload build.log on failure"
+# The vendor modem modules are the only out-of-tree kernel modules in the tree
+# and upstream CI never builds them: keep them in the fast smoke phase so a
+# kernel API/modpost break costs ~1 h instead of a full world build.
+for p in package/feeds/qmodem/quectel_MHI package/feeds/qmodem/quectel_QMI_WWAN \
+	package/feeds/qmodem/simcom_QMI_WWAN package/feeds/aw1000/aw1000-fxs; do
+	grep -q "$p/compile" "$ROOT/build.sh" &&
+		ok "smoke builds $p" || bad "build.sh smoke list must include $p"
+done
 
 head2 "json syntax"
 json_n=0

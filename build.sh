@@ -40,11 +40,26 @@ echo "== download =="
 make -j"$JOBS" V=s download || { echo "download failed; rerun: make -j1 V=s download" >&2; exit 1; }
 
 if [ "$SMOKE" != 0 ]; then
-    echo "== smoke: tools, toolchain, kernel, then the vendor MHI module (V=sc) =="
+    # The vendor modem modules are the risky part: they are out-of-tree, only
+    # built for NSS targets, and upstream CI never compiles them, so a kernel
+    # API change or a missing EXPORT_SYMBOL() shows up as a modpost error after
+    # hours. Build all three up front.
+    echo "== smoke: tools, toolchain, kernel, then the vendor modem modules (V=sc) =="
     for goal in tools/install toolchain/install target/compile \
-                package/feeds/qmodem/quectel_MHI/compile; do
+                package/feeds/qmodem/quectel_MHI/compile \
+                package/feeds/qmodem/quectel_QMI_WWAN/compile \
+                package/feeds/qmodem/simcom_QMI_WWAN/compile \
+                package/feeds/aw1000/aw1000-fxs/compile; do
         echo "-- smoke: $goal"
+        set +e
         make -j"$JOBS" V=sc "$goal" 2>&1 | tee -a "$LOG"
+        rc=${PIPESTATUS[0]}
+        set -e
+        if [ "$rc" -ne 0 ]; then
+            # Already verbose, so the compiler/modpost diagnostic is in the log.
+            echo "SMOKE FAILED rc=$rc at $goal — full log: $LOG" >&2
+            exit "$rc"
+        fi
     done
     echo "== smoke ok =="
 fi

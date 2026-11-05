@@ -49,6 +49,18 @@ symlinks, because they are locally modified:
   the flow-table include are re-asserted before `nss-wifi` (START=19) probes
   the radios. `/etc/nss-wifi.pending` is left alone, so a bring-up the board did
   not survive is still skipped once.
+- kernel: `linux-6.18.60` (from the `ppe-nss` feed). That is newer than what
+  upstream QModem CI tests, so the out-of-tree modem modules are smoke-built
+  before the world build (see Build).
+- the modem data path is **not** NSS-offloaded: `kmod-rmnet-nss`,
+  `kmod-qmi_wwan_q_nss` and `kmod-pcie_mhi_nss` all need `kmod-qca-nss-drv`
+  (`@NSS_DRV_RMNET_ENABLE`), which ppe-nss does not ship — that vendor host
+  driver is exactly what the PPE path replaces. Wi-Fi NSS offload and the fw4
+  flowtable still apply; only wired/modem traffic stays on the CPU.
+  `quectel_MHI` (vendor MHI, `CONFIG_PACKAGE_kmod-pcie_mhi=y`) is patched so its
+  `rmnet_nss_callbacks` reference is compiled out when `kmod-rmnet-nss=n`;
+  without that patch `modpost` aborts the build with
+  `ERROR: modpost: "rmnet_nss_callbacks" [pcie_mhi.ko] undefined!`.
 
 ## Package sources (all pinned)
 | Package | Source | Version |
@@ -299,10 +311,11 @@ diagnostic is discarded - which is exactly how a 4 h CI run failed without
 telling us why. `build.sh` therefore runs `make V=s` (keeps the compiler
 output) and, when the build fails, re-runs each named builddir with
 `make V=sc <builddir>/{clean,compile}` so the real error lands in the same run.
-`SMOKE=1` (default) compiles tools, toolchain, kernel and the vendor
-`quectel_MHI` module before the long `world` build: no extra cost when it
-passes (stamps are reused), an hour instead of four when a kernel module
-breaks. `SMOKE=0` skips it. CI uploads `build.log` as an artifact on failure.
+`SMOKE=1` (default) compiles tools, toolchain, kernel and the four
+out-of-tree kernel modules (`quectel_MHI`, `quectel_QMI_WWAN`,
+`simcom_QMI_WWAN` — none of which upstream CI builds — and `aw1000-fxs`, the
+SLIC driver) before the long `world` build: no extra cost when it passes
+(stamps are reused), an hour instead of four when a kernel module breaks. `SMOKE=0` skips it. CI uploads `build.log` as an artifact on failure.
 
 Machine: 4 threads, 5.8 GB RAM + 4 GB swap → `-j2`. LTO + mold + GCC 15 make
 `-j4` swap-thrash. `make defconfig` prints harmless recursive-dependency errors
