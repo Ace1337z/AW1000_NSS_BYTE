@@ -1,0 +1,33 @@
+#!/bin/sh
+# Serve the WebUI over plain HTTP only - the reference firmware's answer to
+# ERR_CERT_AUTHORITY_INVALID.
+#
+# Every HTTPS setup on a LAN IP warns until the client trusts the issuer. The
+# router avoids that entirely by not speaking TLS to the browser: uhttpd listens
+# on port 80, redirect_https stays 0, and there is no listen_https. A local CA
+# still exists (this image mints one) so the TLS cert is present if HTTPS is
+# ever turned on, but nothing serves it by default.
+#
+# Reaching the UI as http://192.168.1.1 therefore loads with no certificate
+# warning on any browser, with no CA import. Traffic is cleartext on the LAN,
+# which is the same trade the reference firmware makes.
+#
+# Marker-guarded so a deliberate later switch to HTTPS is never reverted.
+[ "$(uci -q get uhttpd.main.aw1000_http_only)" = 1 ] && exit 0
+
+# Drop every HTTPS listener and the redirect.
+uci -q delete uhttpd.main.listen_https 2>/dev/null
+uci -q set uhttpd.main.redirect_https='0'
+# Keep only the port-80 listeners.
+uci -q set uhttpd.main.listen_http='0.0.0.0:80'
+uci -q add_list uhttpd.main.listen_http='[::]:80'
+uci -q set uhttpd.main.aw1000_http_only='1'
+uci -q commit uhttpd
+
+# Make the stock cert generator harmless if these files are ever deleted:
+# the cert is never served, but keep its CN on-brand anyway.
+uci -q set uhttpd.defaults.commonname='BYTE'
+uci -q commit uhttpd
+
+pidof uhttpd >/dev/null 2>&1 && /etc/init.d/uhttpd restart >/dev/null 2>&1
+exit 0

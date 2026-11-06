@@ -1,5 +1,5 @@
 diff --git a/luci-app-netstat/files/usr/lib/lua/luci/view/vnstat.htm b/luci-app-netstat/files/usr/lib/lua/luci/view/vnstat.htm
-index 2ac6ed0..e4b574f 100644
+index 2ac6ed0..123a384 100644
 --- a/luci-app-netstat/files/usr/lib/lua/luci/view/vnstat.htm
 +++ b/luci-app-netstat/files/usr/lib/lua/luci/view/vnstat.htm
 @@ -35,6 +35,25 @@ local function get_interfaces()
@@ -28,13 +28,15 @@ index 2ac6ed0..e4b574f 100644
      table.sort(ifaces)
      return ifaces
  end
-@@ -42,28 +61,56 @@ end
+@@ -42,28 +61,58 @@ end
  local function get_daily_stats(iface)
      local stats = {}
      local output = sys.exec("vnstat -i " .. iface .. " --days 2>/dev/null") or ""
 +    -- vnstat2 (SQLite) format: 2026-11-01   553.11 KiB |  776.28 KiB | ...
 +    -- vnstat1 legacy format:   11/01/26   553.11 KiB |  776.28 KiB | ...
-+    local pat_v2 = "(%d%d%d%d-%d%d-%d%d)%s+([%d%.]+)%s+([KMGT]?i?B)%s+|%s+([%d%.]+)%s+([KMGT]?i?B)"
++    -- Lua patterns: '-' is a lazy quantifier, so the literal date separators
++    -- must be escaped as '%-' or the whole pattern matches nothing.
++    local pat_v2 = "(%d%d%d%d%-%d%d%-%d%d)%s+([%d%.]+)%s+([KMGT]?i?B)%s+|%s+([%d%.]+)%s+([KMGT]?i?B)"
 +    local pat_v1 = "(%d%d/%d%d/%d%d)%s+([%d%.]+)%s+([KMGT]?i?B)%s+|%s+([%d%.]+)%s+([KMGT]?i?B)"
      for date, rx_val, rx_unit, tx_val, tx_unit in
 -        output:gmatch("(%d%d/%d%d/%d%d)%s+([%d%.]+)%s+([KMGT]iB)%s+|%s+([%d%.]+)%s+([KMGT]iB)") do
@@ -64,7 +66,7 @@ index 2ac6ed0..e4b574f 100644
      local output = sys.exec("vnstat -i " .. iface .. " --months 2>/dev/null") or ""
 +    -- vnstat2 (SQLite) format: 2026-11     15.36 MiB |   22.49 MiB | ...
 +    -- vnstat1 legacy format:   Nov '26     15.36 MiB |   22.49 MiB | ...
-+    local pat_v2 = "(%d%d%d%d-%d%d)%s+([%d%.]+)%s+([KMGT]?i?B)%s+|%s+([%d%.]+)%s+([KMGT]?i?B)"
++    local pat_v2 = "(%d%d%d%d%-%d%d)%s+([%d%.]+)%s+([KMGT]?i?B)%s+|%s+([%d%.]+)%s+([KMGT]?i?B)"
 +    local pat_v1 = "(%a+%s+'%d%d)%s+([%d%.]+)%s+([KMGT]?i?B)%s+|%s+([%d%.]+)%s+([KMGT]?i?B)"
      for month, rx_val, rx_unit, tx_val, tx_unit in
 -        output:gmatch("(%a+%s+'%d%d)%s+([%d%.]+)%s+([KMGT]iB)%s+|%s+([%d%.]+)%s+([KMGT]iB)") do

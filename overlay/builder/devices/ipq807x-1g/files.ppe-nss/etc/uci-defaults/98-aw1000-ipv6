@@ -1,31 +1,18 @@
 #!/bin/sh
 # IPv6 is auto-detected at start, never required.
 #
-# OpenWrt no longer ships a wan6 interface, so a fresh config only does IPv4
-# and an ethernet uplink that hands out v6 has nowhere to put it. Create wan6
-# on the WAN device with the stock DHCPv6 client: request an address and a
-# prefix if the ISP offers one, give up quietly if it does not. The modem side
-# is QModem's own <iface>v6 interface (proto dhcpv6) - it needs nothing here.
+# The default /etc/config/network shipped with this image already defines the
+# modem's DHCPv6 uplink as 'wanv6' (device @wan, proto dhcpv6, extendprefix),
+# matching the reference firmware. So there is nothing to create here any more;
+# this script only makes sure LAN can take a delegated prefix and sets the
+# marker so the check stays cheap.
 #
-# LAN is given ip6assign so a delegated prefix is usable; with no delegation
-# this assigns nothing and IPv4 is unaffected. "Prefer IPv4 when there is no
-# IPv6" is not done here: /usr/sbin/aw1000-ipv6-prefer + the iface hotplug
-# switch dnsmasq's filter_AAAA, so nothing has to be disabled or re-enabled.
+# "Prefer IPv4 when there is no usable IPv6" is handled at runtime by
+# /usr/sbin/aw1000-ipv6-prefer, called from /etc/init.d/aw1000-ipv6 (boot) and
+# the iface hotplug: it switches dnsmasq's filter_AAAA and prunes stale v6
+# default routes, so nothing has to be disabled or re-enabled here.
 [ "$(uci -q get network.@globals[0].aw1000_ipv6)" = 1 ] && exit 0
-
-uci -q get network.wan6 >/dev/null || {
-	dev=$(uci -q get network.wan.device)
-	[ -n "$dev" ] || dev='@wan'
-	uci -q set network.wan6=interface
-	uci -q set network.wan6.device="$dev"
-	uci -q set network.wan6.proto='dhcpv6'
-	uci -q set network.wan6.reqaddress='try'
-	uci -q set network.wan6.reqprefix='auto'
-	uci -q set network.wan6.peerdns='1'
-	uci -q set network.wan6.auto='1'
-}
 [ -n "$(uci -q get network.lan.ip6assign)" ] || uci -q set network.lan.ip6assign='60'
-
 uci -q set network.@globals[0].aw1000_ipv6='1'
 uci -q commit network
 exit 0

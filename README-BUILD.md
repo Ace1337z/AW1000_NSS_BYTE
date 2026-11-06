@@ -80,7 +80,7 @@ symlinks, because they are locally modified:
 | chinadns-ng, tcping | Openwrt-Passwall/openwrt-passwall-packages | 2025.08.09 / 0.3 |
 | dns2tcp | copied from ImmortalWrt packages feed | 1.1.2 |
 | vnstat2 | packages feed | 2.14-r1 |
-| sms-tool_q | FUjr/QModem @ b4effcd (feed) | 3.4.0_rc3-r0 |
+| sms-tool_q | FUjr/QModem @ 99553e5 (feed) | 3.4.0_rc3-r0 |
 | aw1000-dashboard | vendored from XT-Martinez/aw1000-feed @ a7e14ad | 1-r1 |
 | luci-app-byte | vendored from Ace1337z/luci-app-byte (standalone, menu under Tools) | 1.0.1-r1 |
 
@@ -181,51 +181,26 @@ build reproduces them.
   overwritten.
 - No key on purpose. LAN stays `192.168.1.1/24` with DHCP.
 
-### HTTPS certificate (why the browser warns, and what this image does)
-HTTPS is enabled in the stock config (`luci-ssl-openssl`, uhttpd listening on
-`0.0.0.0:443` and `[::]:443`, `redirect_https=1`), so `http://192.168.1.1`
-answers `307` to `https://192.168.1.1`. The warning is the certificate, not a
-missing TLS listener:
+### WebUI over plain HTTP (no certificate warning)
+The WebUI is served over **plain HTTP only** — uhttpd listens on port 80
+(`0.0.0.0:80`, `[::]:80`) and HTTPS is off (`redirect_https=0`, no
+`listen_https`). Reach it at `http://192.168.1.1`. It loads with no certificate
+warning on any browser, with no CA import.
 
-- `/etc/init.d/uhttpd` `generate_keys()` builds the self-signed cert from
-  `uhttpd.defaults.commonname` and hardcodes
-  `-addext subjectAltName=DNS:"$commonname"`. Stock `commonname=OpenWrt`, so
-  the cert's only SAN is `DNS:OpenWrt` — no IP, and the box is reached as
-  `https://192.168.1.1`, which can never match. The same cert is also
-  self-signed, so a client has no reason to trust it.
-- Fix shipped here: `etc/uci-defaults/50-aw1000-tls` generates a local **BYTE
-  CA** once (`/etc/uhttpd-ca.crt`/`.key`), then mints EC P-256 server certs
-  signed by it with `DNS:BYTE`, `DNS:BYTE.lan` and `IP:<every address on
-  network.lan>`, mode 600 key, and sets `uhttpd.defaults.commonname=BYTE` and
-  `uhttpd.main.cert`/`.key` so a stock regeneration keeps the name. The CA is
-  served at `https://192.168.1.1/luci-static/ca.crt` for one-time import. It
-  runs before uhttpd starts (`uci-defaults` via `init.d/boot` START=10, uhttpd
-  START=50); the CA regenerates only when missing/expired, and the server cert
-  only when the SAN set changes (LAN address edited), a file is missing, the
-  cert is under 7 days from expiry, or the issuer CA changed — a new cert every
-  boot would invalidate the browser exception each boot. Markers:
-  `system.@system[0].aw1000_tls_san` and `.aw1000_tls_ca` (CA fingerprint).
-- Result: address mismatch gone; the browser still warns once because the CA is
-  not yet trusted. Two ways to make it silent:
-  1. **Trust the BYTE CA once per client** — open
-     `https://192.168.1.1/luci-static/ca.crt` (or
-     `scp root@192.168.1.1:/etc/uhttpd-ca.crt .`) and import it as a trusted
-     root. The CA is valid 10 years, so the import is effectively permanent;
-     the server cert rotates on LAN address changes but stays signed by the
-     same CA, so no warning returns. Keep the router's CA key (`/etc` overlay)
-     guarded — anyone with it can mint certs for this device.
-  2. Use a public ACME cert, which needs a public hostname and port 80/443
-     reachable from the internet — wrong for a LAN-only box.
-- A publicly trusted certificate is impossible for a bare RFC1918 address like
-  `192.168.1.1`. The only warning-free alternative without installing anything
-  on the client is a real domain with DNS-01 issuance (public DNS name pointing
-  at the LAN address + ACME), which needs internet, a domain, and a renewal
-  hook in the image.
-- Verification: `openssl x509 -in /etc/uhttpd.crt -noout -subject -ext
-  subjectAltName,extendedKeyUsage` must show `IP Address:192.168.1.1` and
-  `TLS Web Server Authentication`; `curl -sI http://192.168.1.1/` must answer
-  `307`; `curl -sI https://192.168.1.1/ --cacert /etc/uhttpd.crt` must answer
-  `200` (the hostname check passes because of the IP SAN).
+Why not HTTPS: a publicly trusted certificate is impossible for a bare
+RFC1918 address like `192.168.1.1` — no CA will issue for it, and self-signed
+or local-CA certs always warn until the client imports the CA. The reference
+firmware avoids the `ERR_CERT_AUTHORITY_INVALID` warning the same way: it does
+not speak TLS to the browser at all. This image makes the same trade — HTTP
+for a warning-free UI, cleartext on the LAN.
+
+`etc/uci-defaults/51-aw1000-http-only` drops every HTTPS listener and the
+redirect, and is marker-guarded (`uhttpd.main.aw1000_http_only`) so a
+deliberate later switch to HTTPS is never reverted. `50-aw1000-tls` (the old
+local-CA generator) was removed. The stock `uhttpd` package still builds its
+self-signed key pair, but nothing serves it.
+- Verification: `curl -sI http://192.168.1.1/` answers `200`; port 443 is not
+  open (`ss -ltn` shows only `:80` and `:22`).
 
 ### Dashboard widgets (modem / thermal / storage)
 - `aw1000-dashboard` vendors three widgets (mobile, thermal, storage), `cell.js`

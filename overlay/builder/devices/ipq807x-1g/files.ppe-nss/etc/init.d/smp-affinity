@@ -1,0 +1,71 @@
+#!/bin/sh /etc/rc.common
+# Spread the ath11k Wi-Fi and edma LAN/WAN interrupts one-per-core.
+#
+# The radio driver (ath11k) raises several MSI-X interrupts per radio, and the
+# edma ethernet block raises the LAN/WAN NAPI interrupts. Left at the kernel
+# default they all land on CPU0, which also runs housekeeping and the qdisc, so
+# one core saturates while the others idle.
+#
+# Each reo2host rx ring gets its own core, tcl tx-completion and ppdu-mac get
+# the last three, and all edma (LAN/WAN) go to the last core. Matching is by
+# interrupt name, not number, because IRQ numbers move between boots.
+#
+# This complements aw1000-affinity: smp_affinity spreads Wi-Fi/ethernet IRQs,
+# aw1000-affinity spreads the modem's packet work via RPS/RFS (writing an
+# all-cores mask to a single modem IRQ does nothing - the kernel collapses it
+# back to one CPU - so RPS is what actually distributes that path).
+START=93
+
+PROG=smp_affinity
+
+cpus_to_bitmask() {
+	local bitmask=0
+	for range in ${*//,/ }; do
+		start="${range%-*}"
+		end="${range#*-}"
+		if [ -z "$end" ]; then
+			bitmask=$((bitmask | 1 << start))
+		else
+			bitmask=$((bitmask | (2 ** (end - start + 1) - 1) << start))
+		fi
+	done
+	printf '%x' "$bitmask"
+}
+
+# Set the affinity of every IRQ whose name matches $1 to CPU list $2.
+set_affinity() {
+	local irq_name="$1" affinity="$2" bitmask irq
+	awk -v irq_name="$1" '$0 ~ irq_name { print substr($1, 1, length($1)-1); exit }' \
+		/proc/interrupts | while read -r irq; do
+		[ -n "$irq" ] || continue
+		bitmask=$(cpus_to_bitmask "$affinity") &&
+			echo "$bitmask" > "/proc/irq/$irq/smp_affinity" 2>/dev/null
+	done
+}
+
+enable_affinity_ipq807x() {
+	# 4 rx interrupts, one per core
+	set_affinity 'reo2host-destination-ring1' 0
+	set_affinity 'reo2host-destination-ring2' 1
+	set_affinity 'reo2host-destination-ring3' 2
+	set_affinity 'reo2host-destination-ring4' 3
+	# 3 tcl completions to the last 3 cores
+	set_affinity 'wbm2host-tx-completions-ring1' 1
+	set_affinity 'wbm2host-tx-completions-ring2' 2
+	set_affinity 'wbm2host-tx-completions-ring3' 3
+	# 3 ppdu mac interrupts to the last 3 cores
+	set_affinity 'ppdu-end-interrupts-mac1' 1
+	set_affinity 'ppdu-end-interrupts-mac2' 2
+	set_affinity 'ppdu-end-interrupts-mac3' 3
+	# LAN/WAN (edma) to the last core
+	set_affinity 'edma_txcmpl' 3
+	set_affinity 'edma_rxfill' 3
+	set_affinity 'edma_rxdesc' 3
+	set_affinity 'edma_misc' 3
+}
+
+boot() {
+	config_load smp_affinity
+	config_get_bool enable "smp_affinity" enable 1
+	[ "$enable" = 1 ] && enable_affinity_ipq807x
+}

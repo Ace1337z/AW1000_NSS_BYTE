@@ -44,29 +44,14 @@ CONFIG_PACKAGE_fxsd=y
 CONFIG_PACKAGE_luci-app-netstat=y
 ## Modem information page (repo copy; needs sms-tool_q from the qmodem feed)
 CONFIG_PACKAGE_luci-app-modeminfo=y
-## PassWall v1 (repo copy 4.66-8) and PassWall2 (upstream 26.4.10 pin)
-CONFIG_PACKAGE_luci-app-passwall=y
+## PassWall2 (upstream 26.4.10 pin). Passwall v1 removed to trim the image.
+CONFIG_PACKAGE_luci-app-passwall=n
 CONFIG_PACKAGE_luci-app-passwall2=y
-## Basic Xray core only: no v2ray/sing-box/hysteria/ss/trojan/brook/haproxy/naive
+## Xray core: passwall2's ONLY proxy core, pulled by a hard DEPENDS
+## (+xray-core in the vendored Makefile) - always included, no INCLUDE toggle.
+## (INCLUDE_Xray is a passwall *v1* symbol and no longer exists here.)
+## No v2ray/sing-box/hysteria/ss/trojan/brook/haproxy/naive.
 CONFIG_PACKAGE_xray-core=y
-CONFIG_PACKAGE_luci-app-passwall_INCLUDE_Xray=y
-CONFIG_PACKAGE_luci-app-passwall_INCLUDE_Brook=n
-CONFIG_PACKAGE_luci-app-passwall_INCLUDE_Haproxy=n
-CONFIG_PACKAGE_luci-app-passwall_INCLUDE_Hysteria=n
-CONFIG_PACKAGE_luci-app-passwall_INCLUDE_NaiveProxy=n
-CONFIG_PACKAGE_luci-app-passwall_INCLUDE_Shadowsocks_Libev_Client=n
-CONFIG_PACKAGE_luci-app-passwall_INCLUDE_Shadowsocks_Libev_Server=n
-CONFIG_PACKAGE_luci-app-passwall_INCLUDE_Shadowsocks_Rust_Client=n
-CONFIG_PACKAGE_luci-app-passwall_INCLUDE_Shadowsocks_Rust_Server=n
-CONFIG_PACKAGE_luci-app-passwall_INCLUDE_ShadowsocksR_Libev_Client=n
-CONFIG_PACKAGE_luci-app-passwall_INCLUDE_ShadowsocksR_Libev_Server=n
-CONFIG_PACKAGE_luci-app-passwall_INCLUDE_Simple_Obfs=n
-CONFIG_PACKAGE_luci-app-passwall_INCLUDE_Trojan_GO=n
-CONFIG_PACKAGE_luci-app-passwall_INCLUDE_Trojan_Plus=n
-CONFIG_PACKAGE_luci-app-passwall_INCLUDE_V2ray=n
-CONFIG_PACKAGE_luci-app-passwall_INCLUDE_V2ray_Geodata=n
-CONFIG_PACKAGE_luci-app-passwall_INCLUDE_V2ray_Plugin=n
-CONFIG_PACKAGE_luci-app-passwall_INCLUDE_Xray_Plugin=n
 CONFIG_PACKAGE_luci-app-passwall2_INCLUDE_Haproxy=n
 CONFIG_PACKAGE_luci-app-passwall2_INCLUDE_Hysteria=n
 CONFIG_PACKAGE_luci-app-passwall2_INCLUDE_NaiveProxy=n
@@ -125,20 +110,22 @@ CONFIG_PACKAGE_ubus-at-daemon=y
 CONFIG_PACKAGE_qfirehose=y
 CONFIG_PACKAGE_quectel-CM-5G-M=y
 CONFIG_PACKAGE_ndisc6=y
-CONFIG_PACKAGE_rdnssd=y
-CONFIG_PACKAGE_traceroute6=y
+## rdnssd / traceroute6 trimmed: standalone IPv6 utilities, not in the
+## reference firmware, nothing in the image depends on them, and the IPv6
+## bring-up (odhcpd + aw1000-ipv6-prefer) does not call them.
+CONFIG_PACKAGE_rdnssd=n
+CONFIG_PACKAGE_traceroute6=n
 ## QMI/PCIe modem drivers (vendor, non-NSS)
 CONFIG_PACKAGE_kmod-qmi_wwan_q=y
 CONFIG_PACKAGE_kmod-qmi_wwan_f=y
 CONFIG_PACKAGE_kmod-qmi_wwan_s=y
 CONFIG_PACKAGE_kmod-pcie_mhi=y
-## LuCI pages (Lua stack) + zh-cn/ru i18n
+## LuCI pages (Lua stack) + zh-cn i18n
 CONFIG_PACKAGE_luci-app-qmodem=y
 CONFIG_PACKAGE_luci-app-qmodem-sms=y
 CONFIG_PACKAGE_luci-app-qmodem-ttlfw4=y
 CONFIG_PACKAGE_luci-app-qmodem-voip=y
 CONFIG_PACKAGE_luci-i18n-qmodem-zh-cn=y
-CONFIG_PACKAGE_luci-i18n-qmodem-ru=y
 CONFIG_PACKAGE_luci-i18n-qmodem-sms-zh-cn=y
 CONFIG_PACKAGE_luci-i18n-qmodem-ttlfw4-zh-cn=y
 CONFIG_PACKAGE_luci-i18n-qmodem-voip-zh-cn=y
@@ -168,9 +155,12 @@ CONFIG_PACKAGE_luci-mod-dashboard=y
 CONFIG_PACKAGE_aw1000-dashboard=y
 
 # --- Wi-Fi language packs: LUCI_LANG_* is what makes the hidden
-# luci-i18n-*-zh-cn/-ru packages remain selected. ---
+# luci-i18n-*-zh-cn packages remain selected. ru is trimmed: i18n is
+# translation-only and the user wants English, so CONFIG_LUCI_LANG_ru=n
+# stops every luci-i18n-*-ru package from being generated (LuCI falls back
+# to English where a pack is missing).
 CONFIG_LUCI_LANG_zh_Hans=y
-CONFIG_LUCI_LANG_ru=y
+CONFIG_LUCI_LANG_ru=n
 
 ## voip chain: alsa-lib needs audio-support =y, or alsa-lib stays =m and takes
 ## qmodem-voip/-sipd and luci-app-qmodem-voip down with it.
@@ -226,21 +216,20 @@ CONFIG_VERSION_DIST="BYTE"
 ## CONFIG_VERSION_NUMBER is substituted from ./VERSION by prepare.sh
 ## (@VERSION@ placeholder); the VERSION file is the single source of truth.
 CONFIG_VERSION_NUMBER="@VERSION@"
-# --- Proxy apps: passwall v1 + passwall2, cores pinned to Xray ---
-## The LuCI apps ship; the proxy cores they can optionally pull (v2ray,
-## shadowsocks, trojan, hysteria, naive, sing-box) do not. Only what passwall
-## v1/v2 DEPEND on stays: curl, ip-full, resolveip, unzip, tcping, dns2tcp,
-## bash (v1's nftables.sh has a #!/bin/bash shebang), dnsmasq-full with the
-## nftset module, and the nftables proxy hooks kmod-nft-tproxy/kmod-nft-socket.
-## OpenClash / Nikki dependencies are NOT shipped any more: ruby, ruby-yaml and
-## yq (18 MiB uncompressed) are gone, so are kmod-inet-diag and kmod-dummy.
+# --- Proxy app: passwall2, core pinned to Xray ---
+## passwall v1 was removed to trim the image (passwall2 is the proxy UI).
+## The proxy cores passwall2 can optionally pull (v2ray, shadowsocks, trojan,
+## hysteria, naive, sing-box) are not shipped; only what passwall2 DEPENDS on
+## stays: curl, ip-full, resolveip, unzip, tcping, dnsmasq-full with the nftset
+## module, and the nftables proxy hooks kmod-nft-tproxy/kmod-nft-socket.
+## bash was dropped with v1: only v1's nftables.sh had a #!/bin/bash shebang,
+## passwall2 is POSIX sh.
+## OpenClash / Nikki dependencies are NOT shipped: ruby, ruby-yaml and yq
+## (18 MiB uncompressed) are gone, so are kmod-inet-diag and kmod-dummy.
 ## Those two apps cannot be installed at runtime without adding them back.
-## chinadns-ng is off as well: passwall v1's DEPENDS and passwall2's config
-## selects are dropped (patches/local-feeds/aw1000/0003 for v1, the vendored
-## luci-app-passwall2 Makefile for v2), so DNS goes through dnsmasq + dns2tcp
-## (v1's default dns_mode is dns2tcp). Selecting chinadns-ng as v1's dns_mode
-## will report "not installed"; the page only offers it if the binary is found.
-CONFIG_PACKAGE_bash=y
+## chinadns-ng is off: passwall2's config select is dropped (the vendored
+## luci-app-passwall2 Makefile), so DNS goes through dnsmasq. The page only
+## offers a dns_mode whose binary is found.
 CONFIG_PACKAGE_dnsmasq-full=y
 CONFIG_PACKAGE_dnsmasq_full_nftset=y
 CONFIG_PACKAGE_kmod-nft-tproxy=y

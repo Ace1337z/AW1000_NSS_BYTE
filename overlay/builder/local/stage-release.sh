@@ -76,7 +76,6 @@ OpenWrt ppe-nss (NSS offload) for the Arcadyan AW1000, built from this tree.
 
 | package | version |
 | --- | --- |
-| luci-app-passwall | $(pkgver luci-app-passwall) |
 | luci-app-passwall2 | $(pkgver luci-app-passwall2) |
 | xray-core | $(pkgver xray-core) |
 | luci-app-modeminfo | $(pkgver luci-app-modeminfo) |
@@ -128,12 +127,29 @@ OpenWrt ppe-nss (NSS offload) for the Arcadyan AW1000, built from this tree.
 - vnstat database in \`/etc/vnstat\` (SQLite, one \`vnstat.db\`); its LuCI
   menu node is hidden, and the NetStat graph now lists the real interfaces
   instead of \`vnstat.db\`.
-- First-boot Wi-Fi: the radios miss their initial bring-up race on some cold
-  boots; \`/etc/init.d/aw1000-wifi-ensure\` replays \`wifi reload\` once and
-  logs to \`/tmp/log/aw1000-wifi-ensure.log\` when the APs do not appear.
-- HTTPS: the LuCI certificate is now signed by a local BYTE CA; import
-  \`https://192.168.1.1/luci-static/ca.crt\` once per client for a warning-free
-  UI (details in README-BUILD.md).
+- WebUI is served over plain HTTP only (\`http://192.168.1.1\`): uhttpd
+  listens on port 80, HTTPS is off and there is no redirect. A LAN IP cannot
+  have a warning-free HTTPS without the client importing a CA, so the UI is
+  HTTP - the same trade the reference firmware makes, and no cert warning.
+- Default network topology: the cellular modem (\`wwan0_1\`) is the WAN
+  (\`wan\` DHCP + \`wanv6\` DHCPv6, metric 11) and the 2.5G ethernet jack is
+  just another port in \`br-lan\` — same as the reference firmware, so the box
+  is online out of the box with no ethernet WAN to configure.
+- Wi-Fi defaults now use 5G channel 149 (UNII-3, DFS-free) to match the
+  reference firmware; 2.4 GHz stays on channel 1.
+- CPU usage spread across all four cores by two services: \`smp-affinity\`
+  pins the ath11k Wi-Fi rings and edma LAN/WAN interrupts one per core, and
+  \`aw1000-affinity\` spreads the modem packet path via RPS/XPS/RFS (re-applied
+  on every redial). \`aw1000-tuning\` now just pins the CPU at 2.2 GHz
+  performance.
+- First-boot Wi-Fi: the ath11k phys are loaded by \`/etc/init.d/nss-wifi\`,
+  not the boot-time kmodloader, so netifd could start before any radio was
+  known and leave the box without an SSID. The image now ships a default
+  \`/etc/config/wireless\` (radio0 5G, radio1 2G, open \`BYTE\`), so netifd
+  always has a device to start. \`/etc/init.d/aw1000-wifi-ensure\` is enabled
+  and, if a hotplug ever loses the race, regenerates an empty config and
+  reloads netifd once; a second reload is bounded. Details in
+  \`/tmp/log/aw1000-wifi-ensure.log\`.
 
 ## Install
 

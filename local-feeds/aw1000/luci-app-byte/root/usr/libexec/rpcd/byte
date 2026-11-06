@@ -155,7 +155,7 @@ pw_nodes() {
 	printf '%s' "${n:-0}"
 }
 pw_running() {
-	pidof -o %PPID Xray >/dev/null 2>&1 && return 0
+	pidof xray >/dev/null 2>&1 && return 0
 	pidof Xray >/dev/null 2>&1 && return 0
 	pidof v2ray >/dev/null 2>&1 && return 0
 	[ -s /var/run/passwall2.pid ] && return 0

@@ -1,70 +1,126 @@
 #!/bin/sh /etc/rc.common
-# AW1000: recover radios that missed their first bring-up attempts.
+# AW1000: make sure the configured APs are actually up after first boot.
 #
-# On a cold/first boot, ath11k probes before nss-wifi has finished loading the
-# NSS firmware (S19nss-wifi), and the mac80211 hotplug that would start the
-# configured APs can be lost in the race. The box then boots with no SSID and
-# only a power cycle brings the radios back. This service does one, bounded
-# recovery pass: if the radios are up but the AP interfaces are not, it re-runs
-# `wifi reload` to replay the config-driven bring-up. It never loops and never
-# touches hardware state; if the phy itself never appeared, it records the
-# kernel radio errors and leaves the box alone.
+# The radios on this board are loaded by /etc/init.d/nss-wifi (START=19), not
+# by the boot-time kmodloader. That means the ieee80211 hotplug which writes
+# /etc/config/wireless runs at roughly the same time as netifd starts
+# (/etc/init.d/network, START=20). netifd builds its wireless device objects
+# only from the wifi-device sections it reads on a reload, so if it read the
+# file before the hotplug finished writing it, it has no radio at all.
+# `ubus call network.wireless retry` does not re-read UCI and cannot create a
+# missing device, so that race used to leave the box with no SSID until a
+# manual `wifi reload` or a reboot.
+#
+# This service is the bounded safety net, not the primary fix: the image ships
+# a default /etc/config/wireless. It waits for at least one phy, regenerates
+# the config only if it somehow has no wifi-device sections, then reloads
+# netifd once so it re-reads the file. A second reload is allowed only if the
+# first one did not bring any AP up. It never loops and never unloads a driver.
 #
 # START=26: after network (20) and nss-wifi (19), before user services.
 START=26
 
 RADIO_MAX_WAIT=45
-AP_MAX_WAIT=30
+AP_MAX_WAIT=45
 LOG=/tmp/log/aw1000-wifi-ensure.log
 
-radios_up() {
-	[ -d /sys/class/ieee80211/phy0 ] && [ -d /sys/class/ieee80211/phy1 ]
+radio_count() {
+	ls -d /sys/class/ieee80211/phy* 2>/dev/null | wc -l
 }
 
 aps_up() {
-	[ -d /sys/class/net/phy0-ap0 ] && [ -d /sys/class/net/phy1-ap0 ]
+	local d
+
+	for d in /sys/class/net/phy*-ap*; do
+		[ -e "$d" ] && return 0
+	done
+	return 1
 }
 
-start() {
-	mkdir -p /tmp/log
+config_has_radios() {
+	uci -q show wireless 2>/dev/null | grep -q '=wifi-device'
+}
 
-	# Wait for both radios to appear (firmware load happens in the kernel;
-	# on a slow first boot this can exceed the usual probe window).
-	i=0
-	while ! radios_up && [ "$i" -lt "$RADIO_MAX_WAIT" ]; do
+generate_config() {
+	config_has_radios && return 0
+	logger -t aw1000-wifi-ensure \
+		"no wifi-device sections; generating wireless config from board data"
+	/sbin/wifi config
+	config_has_radios
+}
+
+netifd_ready() {
+	ubus call network.wireless status >/dev/null 2>&1
+}
+
+wait_aps() {
+	local max="$1" i=0
+
+	while ! aps_up && [ "$i" -lt "$max" ]; do
 		sleep 3
 		i=$((i + 3))
 	done
+	aps_up
+}
 
-	if ! radios_up; then
+start() {
+	local n
+
+	mkdir -p /tmp/log
+
+	# Wait for the phy nodes. Firmware load happens in the kernel and can
+	# exceed the usual probe window on a slow first boot.
+	i=0
+	while [ "$(radio_count)" -eq 0 ] && [ "$i" -lt "$RADIO_MAX_WAIT" ]; do
+		sleep 3
+		i=$((i + 3))
+	done
+	n=$(radio_count)
+	if [ "$n" -eq 0 ]; then
 		logger -t aw1000-wifi-ensure \
-			"radios missing after ${RADIO_MAX_WAIT}s; wifi reload cannot help"
+			"no phy after ${RADIO_MAX_WAIT}s; wifi reload cannot help"
 		dmesg | grep -iE "ath11k|nss-wifi" | tail -40 > "$LOG" 2>/dev/null
 		exit 0
 	fi
 
-	# Radios exist but the configured APs are not up: replay the config.
-	if ! aps_up; then
-		[ -f /etc/config/wireless ] || exit 0
-		logger -t aw1000-wifi-ensure "APs down, running wifi reload once"
-		wifi reload >/dev/null 2>&1
+	# The hotplug writes the config after the phy appears; if it lost the
+	# race (or the file is empty because netifd read it too early), the
+	# config has no radios yet. Generate it now that phy nodes exist.
+	generate_config
 
-		i=0
-		while ! aps_up && [ "$i" -lt "$AP_MAX_WAIT" ]; do
-			sleep 3
-			i=$((i + 3))
-		done
-
-		if aps_up; then
-			logger -t aw1000-wifi-ensure "APs up after wifi reload"
-		else
-			logger -t aw1000-wifi-ensure \
-				"APs still down after wifi reload; inspect $LOG"
-			dmesg | grep -iE "ath11k|nss-wifi|hostapd" | tail -60 > "$LOG" \
-				2>/dev/null
-		fi
+	if aps_up; then
+		logger -t aw1000-wifi-ensure "APs up (${n} phy)"
+		exit 0
 	fi
 
+	if netifd_ready; then
+		logger -t aw1000-wifi-ensure \
+			"APs down with ${n} phy; reloading network so it re-reads wireless config"
+		ubus call network reload >/dev/null 2>&1
+	else
+		logger -t aw1000-wifi-ensure \
+			"APs down and netifd not answering; waiting for network start"
+	fi
+
+	if wait_aps "$AP_MAX_WAIT"; then
+		logger -t aw1000-wifi-ensure "APs up after network reload"
+		exit 0
+	fi
+
+	# Last attempt: the config may have been written after the first reload
+	# had already re-read it (slow overlay on a first boot).
+	generate_config
+	if netifd_ready; then
+		logger -t aw1000-wifi-ensure "APs still down; second network reload"
+		ubus call network reload >/dev/null 2>&1
+	fi
+	if wait_aps "$AP_MAX_WAIT"; then
+		logger -t aw1000-wifi-ensure "APs up after second network reload"
+	else
+		logger -t aw1000-wifi-ensure "APs still down; inspect $LOG"
+		dmesg | grep -iE "ath11k|nss-wifi|hostapd" | tail -60 > "$LOG" \
+			2>/dev/null
+	fi
 	exit 0
 }
 

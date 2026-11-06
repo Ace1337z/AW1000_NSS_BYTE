@@ -1,0 +1,27 @@
+#!/bin/sh
+# netifd builds its wireless device objects only from the wifi-device sections
+# it reads when it (re)loads /etc/config/wireless. `ubus call
+# network.wireless retry` (10-wifi-detect) can only restart devices it already
+# knows; it cannot add one. If the config was written after netifd started,
+# the retry is a no-op and the box stays without an SSID even though the file
+# on disk is correct.
+#
+# This runs after 10-wifi-detect on the same ieee80211 add event. It forces a
+# single network reload only when netifd knows of no wireless device at all,
+# i.e. exactly the case retry cannot fix. A runtime radio hotplug (module
+# reload, USB radio) is left alone: the early-boot uptime gate keeps this from
+# restarting production Wi-Fi later.
+[ "$ACTION" = add ] || return 0
+[ -f /etc/config/wireless ] || return 0
+[ "$(cut -d. -f1 /proc/uptime 2>/dev/null || echo 0)" -lt 300 ] || return 0
+# One forced reload per boot is enough; phy0 and phy1 add back to back.
+[ -e /tmp/.aw1000-wifi-reloaded ] && return 0
+. /usr/share/libubox/jshn.sh
+json_load "$(ubus call network.wireless status 2>/dev/null)" || return 0
+json_get_keys known
+json_cleanup
+[ -n "$known" ] && return 0
+: > /tmp/.aw1000-wifi-reloaded
+logger -t aw1000-wifi-reload \
+	"netifd knows no wireless device; reloading network to read the config"
+ubus call network reload >/dev/null 2>&1

@@ -1,0 +1,283 @@
+diff --git a/application/voipd/files/usr/lib/qmodem_voip/modem_safety.sh b/application/voipd/files/usr/lib/qmodem_voip/modem_safety.sh
+index 8686a78..1100df4 100755
+--- a/application/voipd/files/usr/lib/qmodem_voip/modem_safety.sh
++++ b/application/voipd/files/usr/lib/qmodem_voip/modem_safety.sh
+@@ -83,7 +83,7 @@ qmodem_voip_load_capability()
+ 		fi
+ 		capability_index=$((capability_index + 1))
+ 	done
+-	[ "$capability_matches" = 1 ] || { qmodem_voip_fault 'exact modem capability unavailable'; return 1; }
++	[ "$capability_matches" = 1 ] || { qmodem_voip_fault 'exact modem capability unavailable'; return 2; }
+ }
+ 
+ qmodem_voip_checksum() { sha256sum "$1" | awk '{print $1}'; }
+@@ -156,11 +156,14 @@ qmodem_voip_read_journal()
+ 
+ qmodem_voip_probe()
+ {
++	# Exit contract for the daemon: 0 = supported now, 1 = not ready yet
++	# (AT port, SIM or registration still settling), 2 = definitively
++	# unsupported hardware/firmware. Only 2 may persist enabled=0.
+ 	model=$(qmodem_voip_value 'AT+CGMM') || return 1
+ 	firmware=$(qmodem_voip_value 'AT+CGMR') || return 1
+ 	slot=$(qmodem_voip_adapter_usb_slot) || return 1
+ 	usb_id=$(qmodem_voip_adapter_usb_id) || return 1
+-	qmodem_voip_load_capability "$model" "$firmware" "$usb_id" || return 1
++	qmodem_voip_load_capability "$model" "$firmware" "$usb_id" || return $?
+ 	[ "$(qmodem_voip_value 'AT+CPIN?')" = READY ] || return 1
+ 	lte_status=$(qmodem_voip_value 'AT+CEREG?') || return 1
+ 	nr_status=$(qmodem_voip_value 'AT+C5GREG?') || return 1
+@@ -250,7 +253,7 @@ qmodem_voip_restore()
+ qmodem_voip_enable()
+ {
+ 	if [ -f "$QMODEM_VOIP_JOURNAL" ]; then
+-		qmodem_voip_read_journal || return $?
++		qmodem_voip_read_journal || return 1
+ 		[ "$phase" = enabled ] || {
+ 			qmodem_voip_fault 'incomplete modem safety transaction requires recovery'
+ 			return 1
+@@ -260,9 +263,16 @@ qmodem_voip_enable()
+ 			return 1
+ 		}
+ 		qmodem_voip_recover
+-		return $?
++		rc=$?
++		[ "$rc" = 2 ] && rc=1
++		return "$rc"
+ 	fi
+-	qmodem_voip_probe >/dev/null || { qmodem_voip_fault 'unsupported experimental modem prerequisites'; return 1; }
++	qmodem_voip_probe >/dev/null
++	rc=$?
++	[ "$rc" = 0 ] || {
++		[ "$rc" = 2 ] && qmodem_voip_fault 'unsupported experimental modem prerequisites'
++		return "$rc"
++	}
+ 	qmodem_voip_adapter_enable_ubus || {
+ 		qmodem_voip_fault 'failed to enable the shared AT transport'
+ 		return 1
+diff --git a/application/voipd/src/daemon_core.c b/application/voipd/src/daemon_core.c
+index 138943b..9b69d89 100644
+--- a/application/voipd/src/daemon_core.c
++++ b/application/voipd/src/daemon_core.c
+@@ -72,6 +72,20 @@ static int wait_program(pid_t child)
+ 	return WIFEXITED(status) && WEXITSTATUS(status) == 0 ? 0 : -1;
+ }
+ 
++/* Raw exit status, for helpers whose exit code carries a classification
++ * (modem_safety "probe"/"enable": 1 = not ready yet, 2 = unsupported). */
++static int wait_program_status(pid_t child)
++{
++	int status;
++	while (waitpid(child, &status, 0) < 0) {
++		if (errno != EINTR)
++			return -1;
++	}
++	if (!WIFEXITED(status))
++		return -1;
++	return WEXITSTATUS(status);
++}
++
+ int qmodem_voip_prepare_adb(const struct qmodem_voip_modem_profile *profile)
+ {
+ 	pid_t child;
+@@ -183,7 +197,7 @@ static int run_safety(const char *action, int quiet)
+ 		execl(SAFETY_HELPER, SAFETY_HELPER, action, (char *)NULL);
+ 		_exit(127);
+ 	}
+-	return wait_program(child);
++	return wait_program_status(child);
+ }
+ 
+ static void serial_arm_process_done(struct uloop_process *process, int status)
+@@ -644,19 +658,23 @@ static int capabilities_method(struct ubus_context *ubus,
+ {
+ 	struct qmodem_voip_context *app = &qmodem_voip_ctxt;
+ 	struct blob_buf buffer = { 0 };
++	int probe_status;
+ 	int supported;
+ 	(void)object;
+ 	(void)method;
+ 	(void)message;
+ 	qmodem_voip_media_sync();
+-	supported = run_safety("probe", 1) == 0;
++	probe_status = run_safety("probe", 1);
++	supported = probe_status == 0;
+ 	blob_buf_init(&buffer, 0);
+ 	blobmsg_add_string(&buffer, "status", "experimental");
+ 	blobmsg_add_u8(&buffer, "supported", supported);
+ 	blobmsg_add_string(&buffer, "support_state",
+ 			   supported ? "supported" : "unsupported");
+ 	blobmsg_add_string(&buffer, "reason",
+-			   supported ? "probe_passed" : "hardware_probe_failed");
++			   supported ? "probe_passed" :
++			   probe_status == 2 ? "hardware_unsupported" :
++					       "modem_not_ready");
+ 	blobmsg_add_u8(&buffer, "enabled", app->call.enabled);
+ 	blobmsg_add_string(&buffer, "hardware", app->media.profile.model);
+ 	blobmsg_add_string(&buffer, "external_sip", "unsupported");
+@@ -669,9 +687,16 @@ static int capabilities_method(struct ubus_context *ubus,
+ enum qmodem_voip_activation_result {
+ 	QMODEM_VOIP_ACTIVATION_FAILED = -1,
+ 	QMODEM_VOIP_ACTIVATION_READY = 0,
+-	QMODEM_VOIP_ACTIVATION_RESTART = 1
++	QMODEM_VOIP_ACTIVATION_RESTART = 1,
++	QMODEM_VOIP_ACTIVATION_DEFERRED = 2
+ };
+ 
++/* Bounded retry for temporary boot conditions: the modem is not registered or
++ * the SIM is not ready yet at START=99. 5 s, 10 s, ... capped at 300 s. */
++#define QMODEM_VOIP_ACTIVATION_MAX_ATTEMPTS 8U
++#define QMODEM_VOIP_ACTIVATION_MIN_DELAY_MS 5000U
++#define QMODEM_VOIP_ACTIVATION_MAX_DELAY_MS 300000U
++
+ static void release_runtime(struct qmodem_voip_context *app)
+ {
+ 	uloop_timeout_cancel(&app->browser_timer);
+@@ -684,11 +709,12 @@ static void release_runtime(struct qmodem_voip_context *app)
+ static int activate_runtime(struct qmodem_voip_context *app)
+ {
+ 	int result;
++	int safety_status;
+ 
+ 	result = qmodem_voip_prepare_adb(&app->media.profile);
+ 	if (result < 0) {
+-		syslog(LOG_ERR, "ADB unlock check failed");
+-		return QMODEM_VOIP_ACTIVATION_FAILED;
++		syslog(LOG_NOTICE, "ADB not ready; deferring voice activation");
++		return QMODEM_VOIP_ACTIVATION_DEFERRED;
+ 	}
+ 	if (result > 0) {
+ 		syslog(LOG_NOTICE,
+@@ -696,15 +722,28 @@ static int activate_runtime(struct qmodem_voip_context *app)
+ 		return QMODEM_VOIP_ACTIVATION_RESTART;
+ 	}
+ 	if (qmodem_voip_prepare_media_gate(&app->media.profile) != 0) {
+-		syslog(LOG_ERR, "voice-server media gate installation failed");
+-		return QMODEM_VOIP_ACTIVATION_FAILED;
++		syslog(LOG_NOTICE,
++			"voice-server media gate not ready; deferring voice activation");
++		return QMODEM_VOIP_ACTIVATION_DEFERRED;
+ 	}
+-	if (run_safety("enable", 0) != 0)
++	safety_status = run_safety("enable", 0);
++	if (safety_status == 2) {
++		syslog(LOG_ERR,
++			"modem/firmware has no supported voice path");
+ 		return QMODEM_VOIP_ACTIVATION_FAILED;
++	}
++	if (safety_status != 0) {
++		syslog(LOG_NOTICE,
++			"voice prerequisites not ready (status %d); deferring",
++			safety_status);
++		return QMODEM_VOIP_ACTIVATION_DEFERRED;
++	}
+ 	qmodem_voip_profile_select(&app->media.profile, QMODEM_VOIP_PROFILE_PATH);
+ 	if (qmodem_voip_media_engine_start(&app->media) != 0) {
+ 		(void)run_safety("disable", 0);
+-		return QMODEM_VOIP_ACTIVATION_FAILED;
++		syslog(LOG_NOTICE,
++			"voice media engine not ready; deferring voice activation");
++		return QMODEM_VOIP_ACTIVATION_DEFERRED;
+ 	}
+ 	qmodem_voip_call_set_enabled(&app->call, 1);
+ 	app->command_failed = 0;
+@@ -714,7 +753,9 @@ static int activate_runtime(struct qmodem_voip_context *app)
+ 		release_runtime(app);
+ 		(void)run_safety("disable", 0);
+ 		qmodem_voip_call_set_enabled(&app->call, 0);
+-		return QMODEM_VOIP_ACTIVATION_FAILED;
++		syslog(LOG_NOTICE,
++			"voice call setup not ready; deferring voice activation");
++		return QMODEM_VOIP_ACTIVATION_DEFERRED;
+ 	}
+ 	uloop_timeout_set(&app->browser_timer, 20);
+ 	qmodem_voip_publish_event(&app->call, "enabled", app);
+@@ -729,6 +770,33 @@ static void schedule_modem_reenumeration(struct qmodem_voip_context *app)
+ 	uloop_timeout_set(&app->restart_timer, 500);
+ }
+ 
++static void schedule_activation_retry(struct qmodem_voip_context *app)
++{
++	unsigned int exponent;
++	unsigned int delay_ms;
++
++	if (app->activation_attempts >= QMODEM_VOIP_ACTIVATION_MAX_ATTEMPTS) {
++		/* Give up for this boot without touching UCI: enabled stays 1, so
++		 * the next service start (or reboot) tries again. */
++		syslog(LOG_WARNING,
++			"voice still not ready after %u attempts; keeping config enabled, retry on next start",
++			app->activation_attempts);
++		return;
++	}
++	exponent = app->activation_attempts;
++	if (exponent > 8)
++		exponent = 8;
++	delay_ms = QMODEM_VOIP_ACTIVATION_MIN_DELAY_MS << exponent;
++	if (delay_ms > QMODEM_VOIP_ACTIVATION_MAX_DELAY_MS)
++		delay_ms = QMODEM_VOIP_ACTIVATION_MAX_DELAY_MS;
++	app->activation_attempts++;
++	syslog(LOG_NOTICE,
++		"voice activation deferred; retry %u/%u in %u ms",
++		app->activation_attempts, QMODEM_VOIP_ACTIVATION_MAX_ATTEMPTS,
++		delay_ms);
++	uloop_timeout_set(&app->activation_timer, delay_ms);
++}
++
+ void qmodem_voip_activation_timer(struct uloop_timeout *timeout)
+ {
+ 	struct qmodem_voip_context *app = &qmodem_voip_ctxt;
+@@ -742,12 +810,18 @@ void qmodem_voip_activation_timer(struct uloop_timeout *timeout)
+ 		schedule_modem_reenumeration(app);
+ 		return;
+ 	}
++	if (result == QMODEM_VOIP_ACTIVATION_DEFERRED) {
++		schedule_activation_retry(app);
++		return;
++	}
+ 	if (result == QMODEM_VOIP_ACTIVATION_FAILED) {
+ 		app->start_enabled = 0;
+ 		(void)set_application_enabled(0);
+ 		syslog(LOG_ERR,
+-			"persisted qmodem voip enable failed; application disabled");
++			"voice hardware unsupported; application disabled");
++		return;
+ 	}
++	app->activation_attempts = 0;
+ }
+ 
+ void qmodem_voip_restart_timer(struct uloop_timeout *timeout)
+@@ -774,6 +848,7 @@ static int enable_method(struct ubus_context *ubus, struct ubus_object *object,
+ 		return qmodem_voip_reply_status(ubus, request, UBUS_STATUS_UNKNOWN_ERROR,
+ 				    "config_failed", "application enable could not be persisted");
+ 	app->start_enabled = 1;
++	app->activation_attempts = 0;
+ 	result = activate_runtime(app);
+ 	if (result == QMODEM_VOIP_ACTIVATION_RESTART) {
+ 		schedule_modem_reenumeration(app);
+@@ -785,6 +860,14 @@ static int enable_method(struct ubus_context *ubus, struct ubus_object *object,
+ 		return qmodem_voip_reply_status(ubus, request, UBUS_STATUS_NOT_SUPPORTED,
+ 				    "unsupported", "unsupported or unsafe modem media path");
+ 	}
++	if (result == QMODEM_VOIP_ACTIVATION_DEFERRED) {
++		/* The user asked for voice: keep it enabled and retry in the
++		 * background while the modem finishes registering. */
++		schedule_activation_retry(app);
++		return qmodem_voip_reply_status(ubus, request,
++				    UBUS_STATUS_UNKNOWN_ERROR, "modem_not_ready",
++				    "modem not ready yet; retrying in background");
++	}
+ 	return qmodem_voip_reply_ok_snapshot(ubus, request);
+ }
+ 
+diff --git a/application/voipd/src/daemon_core.h b/application/voipd/src/daemon_core.h
+index 76bf602..74e355e 100644
+--- a/application/voipd/src/daemon_core.h
++++ b/application/voipd/src/daemon_core.h
+@@ -40,6 +40,7 @@ struct qmodem_voip_context {
+ 	unsigned int serial_active_arm_attempts;
+ 	unsigned int serial_active_generation;
+ 	unsigned int serial_arm_process_generation;
++	unsigned int activation_attempts;
+ 	int start_enabled;
+ 	int stop;
+ };

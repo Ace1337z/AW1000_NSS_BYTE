@@ -127,7 +127,7 @@ if [ -f "$CONFIG" ]; then
 	ok "$sym_n fragment symbols kept"
 	for sym in CONFIG_PACKAGE_luci-theme-footstrap=y CONFIG_PACKAGE_luci-theme-bootstrap=y \
 		CONFIG_PACKAGE_fxsd=y CONFIG_PACKAGE_luci-app-byte=y CONFIG_PACKAGE_luci-app-passwall2=y \
-		CONFIG_PACKAGE_luci-app-passwall=y CONFIG_PACKAGE_xray-core=y CONFIG_PACKAGE_vnstat2=y \
+		CONFIG_PACKAGE_xray-core=y CONFIG_PACKAGE_vnstat2=y \
 		CONFIG_PACKAGE_luci-app-netstat=y CONFIG_PACKAGE_luci-app-modeminfo=y \
 		CONFIG_PACKAGE_luci-app-qmodem=y CONFIG_PACKAGE_luci-app-qmodem-ttlfw4=y \
 		CONFIG_PACKAGE_nss-firmware=y CONFIG_PACKAGE_kmod-nss-wifi-drv=y; do

@@ -1,0 +1,34 @@
+#!/bin/sh
+# Re-apply the image defaults to config files that a settings-keeping
+# sysupgrade preserved from an older firmware.
+#
+# uci-defaults scripts ship with the image and run once per /etc overlay, but a
+# sysupgrade without -n keeps the old /etc/config/* files, so a changed package
+# default (the voipd call service + web media flags) never takes effect and the
+# user has to toggle it by hand. Toggle only the shipped defaults that are still
+# off, then set a marker so a deliberate later choice is never overridden.
+[ "$(uci -q get system.@system[0].aw1000_config_migrate_v1)" = 1 ] && exit 0
+
+# WebUI is now HTTP-only (see 51-aw1000-http-only). A settings-keeping
+# sysupgrade keeps the old /etc/config/uhttpd with port-443 listeners, so
+# clear them here the same way the fresh-install default does.
+uci -q delete uhttpd.main.listen_https 2>/dev/null
+uci -q set uhttpd.main.redirect_https='0'
+uci -q set uhttpd.main.aw1000_http_only='1'
+uci -q commit uhttpd
+
+if [ -f /etc/config/qmodem_voip ]; then
+	[ "$(uci -q get qmodem_voip.main.enabled)" = 0 ] &&
+		uci -q set qmodem_voip.main.enabled=1
+	[ "$(uci -q get qmodem_voip.main.web_enabled)" = 0 ] &&
+		uci -q set qmodem_voip.main.web_enabled=1
+	uci -q commit qmodem_voip
+fi
+
+uci -q set system.@system[0].aw1000_config_migrate_v1=1
+uci -q commit system
+
+# Restart the voice stack so the new flags take effect without a reboot.
+[ -x /etc/init.d/qmodem_voip ] && /etc/init.d/qmodem_voip restart >/dev/null 2>&1
+
+exit 0

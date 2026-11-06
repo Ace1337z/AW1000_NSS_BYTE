@@ -102,7 +102,7 @@ COMMON=common \
 CONFIG_FRAGMENT=local/aw1000.fragment \
 FEEDS="src-git nss https://github.com/JuliusBairaktaris/nss-packages.git;ppe-nss
 src-git luci https://github.com/JuliusBairaktaris/luci.git;luci-app-ppe-qos
-src-git qmodem https://github.com/FUjr/QModem.git^b4effcdaa7f73b26b27f01a8cca3c31f8e98be26
+src-git qmodem https://github.com/FUjr/QModem.git^99553e5a4cdf577a678e8fa3d4aac5f4de1d2f36
 src-link aw1000 $PWD/local-feeds/aw1000" \
 bash builder/scripts/prepare-build.sh
 

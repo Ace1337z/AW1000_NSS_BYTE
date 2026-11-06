@@ -5,25 +5,87 @@
 # plain DHCPv6 client and QModem publishes the card's v6 address on its own
 # <iface>v6 interface. Only the LAN resolver is steered:
 #
-#   no v6 default route, or no non-ULA global address -> dnsmasq filter_aaaa=1
-#   a v6 default route and a global address           -> dnsmasq filter_aaaa=0
+#   no usable v6 default route -> dnsmasq filter_aaaa=1
+#   a usable v6 default route  -> dnsmasq filter_aaaa=0
 #
-# So on an IPv4-only line clients never see AAAA records and never stall on
-# dual-stack names, and on a v6-capable line nothing is filtered. The kernel,
-# the interfaces and odhcpd are never touched, so detection keeps running.
+# "Usable" means the device that owns a default route also has a global,
+# non-ULA, non-deprecated address. A default route whose device has no such
+# address is stale (QModem leaves `default dev wwan0_1` behind when the PDP
+# context loses its v6 address); it is deleted here so odhcpd stops advertising
+# itself as an IPv6 router with a finite lifetime and clients stop preferring a
+# dead path. The kernel, the interfaces and odhcpd config are never touched
+# otherwise, so detection keeps running.
 #
 # Exit 0 always: callers are hotplug and boot, neither should fail on this.
 [ -e /etc/aw1000/keep-aaaa ] && exit 0
 
-# ULA (fc00::/7) and link-local do not mean "IPv6 internet". A tentative or
-# DAD-failed address does not count either.
-has_v6() {
-	ip -6 route show default 2>/dev/null | grep -q '^default' || return 1
-	ip -6 addr show scope global 2>/dev/null |
-		grep 'inet6 ' |
-		grep -v 'inet6 f[cd]' |
-		grep -qv 'tentative\|dadfailed'
+# Global, non-ULA (fc00::/7), not tentative and not deprecated address on $1.
+# A deprecated address (preferred_lft 0) is still valid but no new connection
+# may source from it, so it does not mean "IPv6 internet".
+addr_usable() {
+	ip -6 addr show dev "$1" scope global 2>/dev/null |
+		awk '$1 == "inet6" {
+			for (i = 2; i <= NF; i++)
+				if ($i == "deprecated" || $i == "tentative" ||
+				    $i == "dadfailed")
+					next
+			if ($2 ~ /^f[cd]/)
+				next
+			found = 1
+		}
+		END { exit(found ? 0 : 1) }'
 }
+
+route_dev() {
+	printf '%s\n' "$1" | awk '{ for (i = 1; i < NF; i++) if ($i == "dev") { print $(i + 1); exit } }'
+}
+
+route_metric() {
+	printf '%s\n' "$1" | awk '{ for (i = 1; i < NF; i++) if ($i == "metric") { print $(i + 1); exit } }'
+}
+
+# Drop default routes whose device cannot source IPv6. Explicit `via` routes are
+# left alone: they belong to a peer that will bring its own address back.
+prune_stale_defaults() {
+	local routes line dev metric
+	routes=$(ip -6 route show default 2>/dev/null) || return 0
+	[ -n "$routes" ] || return 0
+	while IFS= read -r line; do
+		[ -n "$line" ] || continue
+		case " $line " in
+			*" via "*) continue ;;
+		esac
+		dev=$(route_dev "$line")
+		[ -n "$dev" ] || continue
+		addr_usable "$dev" && continue
+		metric=$(route_metric "$line")
+		logger -t aw1000-ipv6 "removing unusable IPv6 default route: $line"
+		if [ -n "$metric" ]; then
+			ip -6 route del default dev "$dev" metric "$metric" 2>/dev/null
+		else
+			ip -6 route del default dev "$dev" 2>/dev/null
+		fi
+	done <<EOF
+$routes
+EOF
+}
+
+has_v6() {
+	local routes line dev
+	routes=$(ip -6 route show default 2>/dev/null) || return 1
+	[ -n "$routes" ] || return 1
+	while IFS= read -r line; do
+		[ -n "$line" ] || continue
+		dev=$(route_dev "$line")
+		[ -n "$dev" ] || continue
+		addr_usable "$dev" && return 0
+	done <<EOF
+$routes
+EOF
+	return 1
+}
+
+prune_stale_defaults
 
 want=1
 has_v6 && want=0

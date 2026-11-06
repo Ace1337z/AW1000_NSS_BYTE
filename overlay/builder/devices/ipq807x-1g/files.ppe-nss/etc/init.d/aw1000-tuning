@@ -1,74 +1,47 @@
 #!/bin/sh /etc/rc.common
-# AW1000: CPU governor and modem IRQ placement.
+# AW1000: CPU frequency policy.
 #
 # The sysctls (BBR, fq, Fast Open, netdev backlog/budget) live in
 # /etc/sysctl.d/99-aw1000-tuning.conf and are applied by /etc/init.d/sysctl.
-# This script handles the two things sysctl cannot:
-#   1. the cpufreq governor - every boot, because the kernel starts on
-#      schedutil and the governor is runtime state, not a config file;
-#   2. the modem IRQs - spread over the secondary CPUs instead of piling on
-#      CPU0, which also runs the NAPI pollers for LAN/WAN and the qdisc.
+# This script only handles the cpufreq policy, which is runtime state the
+# kernel does not persist: the governor and the min/max frequencies.
 #
-# CPU0 is left out of the round-robin: it keeps housekeeping and the
-# scheduler's own work, and pinning modem IRQs there is what this is meant to
-# avoid. On this SoC the modem is USB (xhci) or PCIe MHI depending on the card
-# fitted, so both families are matched; nothing else is touched.
-
+# performance + min=max=2.2 GHz means the CPU never scales down and never has
+# to ramp back up, so the first packet after idle is not delayed by a frequency
+# transition. Costs a little idle power; buys zero ramp latency.
+#
+# CPU spread is not done here. It moved to two dedicated services so each
+# concern has one owner:
+#   smp-affinity (START=93) - ath11k Wi-Fi rings and edma LAN/WAN IRQs, one
+#     core each, by interrupt name.
+#   aw1000-affinity (START=96) - modem packet work via RPS/XPS/RFS on the wwan
+#     devices. Writing an all-cores mask to a single modem IRQ does nothing
+#     (the kernel collapses effective_affinity back to one CPU), so RPS is what
+#     actually distributes that path.
 START=99
 STOP=10
 
-set_governor() {
-	local gov
+set_policy() {
+	local base
+	for base in /sys/devices/system/cpu/cpufreq/policy[0-9]*; do
+		[ -d "$base" ] || continue
+		[ -w "$base/scaling_governor" ] || continue
+		[ "$(cat "$base/scaling_governor")" = performance ] ||
+			echo performance > "$base/scaling_governor" 2>/dev/null
+		# Pin min = max so the governor cannot drop to the low OPP.
+		for f in scaling_min_freq scaling_max_freq; do
+			[ -w "$base/$f" ] && echo 2208000 > "$base/$f" 2>/dev/null
+		done
+	done
+	# Older layout: per-cpu cpufreq dirs instead of policies.
 	for gov in /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor; do
 		[ -w "$gov" ] || continue
-		[ "$(cat "$gov")" = performance ] || echo performance > "$gov"
+		[ "$(cat "$gov")" = performance ] || echo performance > "$gov" 2>/dev/null
 	done
-}
-
-# One pass: put each modem IRQ on the next secondary CPU. Returns 1 while no
-# modem IRQ exists yet, so the caller can retry after the driver probes.
-spread_irqs() {
-	local cpus="" i=1 irq list n=0 idx=0 cpu
-	while [ -d "/sys/devices/system/cpu/cpu$i" ]; do
-		cpus="$cpus $i"
-		i=$((i + 1))
-	done
-	[ -n "$cpus" ] || return 0
-	set -- $cpus
-	n=$#
-
-	# /proc/interrupts columns: IRQ: then one counter per CPU, then the
-	# controller and the name. Match the name, not the number: IRQ numbers
-	# move between boots.
-	list=$(awk -F: '/[[:space:]](mhi|mhi_net|xhci[^ ]*|dwc3|pcie[^ ]*)[[:space:]]/ {
-		irq = $1
-		gsub(/[[:space:]]/, "", irq)
-		print irq
-	}' /proc/interrupts)
-
-	[ -n "$list" ] || return 1
-
-	for irq in $list; do
-		idx=$((idx % n + 1))
-		eval cpu=\${$idx}
-		# Shared or per-CPU IRQs refuse the write; nothing to fix there.
-		echo "$cpu" > "/proc/irq/$irq/smp_affinity_list" 2>/dev/null || true
-	done
-	return 0
 }
 
 start() {
-	set_governor
-	# The modem driver probes after rcS on USB; retry in the background so
-	# boot is not held up for a card that may never appear.
-	(
-		i=0
-		while [ $i -lt 30 ]; do
-			spread_irqs && break
-			i=$((i + 1))
-			sleep 2
-		done
-	) &
+	set_policy
 }
 
 stop() {

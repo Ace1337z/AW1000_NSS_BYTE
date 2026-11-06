@@ -1,0 +1,57 @@
+# Default network for the Arcadyan AW1000.
+#
+# Topology follows the reference firmware: the cellular modem is the WAN, and
+# the ethernet "wan" jack is just another LAN port in the bridge. There is no
+# separate ethernet WAN interface, so the 2.5G jack works as a downstream port
+# out of the box and the modem provides the uplink. A user who wants ethernet
+# WAN can move 'wan' out of br-lan and point interface 'wan' at it from LuCI.
+#
+# Interfaces:
+#   lan    static 192.168.1.1/24 on br-lan, IPv6 delegated prefix (ip6assign 60)
+#   wan    DHCP on wwan0_1, the qmodem data bearer (metric 11, default route)
+#   wanv6  DHCPv6 on the same bearer, extended prefix
+#
+# Shipped so the box comes up with a known-good topology; a user edit to any
+# interface survives a settings-keeping sysupgrade.
+
+config interface 'loopback'
+	option device 'lo'
+	option proto 'static'
+	option ipaddr '127.0.0.1'
+	option netmask '255.0.0.0'
+
+config globals 'globals'
+	option ula_prefix 'fdb0:d40a:1782::/48'
+	# NSS/edma moves packets in hardware; software steering would fight it.
+	option packet_steering '0'
+
+config device
+	option name 'br-lan'
+	option type 'bridge'
+	list ports 'lan1'
+	list ports 'lan2'
+	list ports 'lan3'
+	list ports 'lan4'
+	list ports 'wan'
+
+config interface 'lan'
+	option device 'br-lan'
+	option proto 'static'
+	option ipaddr '192.168.1.1'
+	option netmask '255.255.255.0'
+	option ip6assign '60'
+	option defaultroute '0'
+
+config interface 'wan'
+	option device 'wwan0_1'
+	option proto 'dhcp'
+	option modem_config '4_1'
+	option defaultroute '1'
+	option metric '11'
+
+config interface 'wanv6'
+	option device '@wan'
+	option proto 'dhcpv6'
+	option modem_config '4_1'
+	option metric '11'
+	option extendprefix '1'

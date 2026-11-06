@@ -1,0 +1,72 @@
+# Default Wi-Fi for the Arcadyan AW1000.
+#
+# This file is shipped in the image on purpose. netifd builds its wireless
+# device objects only from the wifi-device sections in this UCI file, and it
+# does that once per `network reload`. The ath11k radios on this board are
+# loaded by /etc/init.d/nss-wifi (START=19), not by the boot-time kmodloader,
+# so on a fresh image the first `/sbin/wifi config` at START=10 runs before
+# any phy exists and would leave this file empty. `ubus call
+# network.wireless retry` (from the ieee80211 hotplug) cannot add a device
+# netifd never read; it only restarts devices it already knows. Shipping the
+# radios here makes the first boot deterministic: netifd always has radio0
+# and radio1 to start, whenever the phy appears.
+#
+# The paths match the DTS (and /etc/hotplug.d/ieee80211/05-wifi-migrate fixes
+# them if a future kernel renames the node). mac80211.uc sees these sections
+# and leaves them alone, so a user-changed SSID/key is never overwritten.
+
+config wifi-device 'radio0'
+	option type 'mac80211'
+	option path 'platform/soc@0/c000000.wifi'
+	option band '5g'
+	# Channel 149 (UNII-3): the reference firmware's choice. High band,
+	# usually clear of the crowded UNII-1/2 channels, and DFS-free on this
+	# regulatory table so the AP does not go silent waiting for a radar
+	# clear. mac80211.uc will not rewrite it: only the first-boot generation
+	# reads board.json, and this shipped file already has the radio.
+	option channel '149'
+	option htmode 'HE80'
+	option country 'US'
+	option disabled '0'
+	option cell_density '0'
+	# Max legal EIRP for the regulatory domain. The driver clamps this to the
+	# country table's limit, so it is safe to ask for the maximum.
+	option txpower '30'
+	option beacon_int '100'
+	option rts '2347'
+	option frag '2346'
+
+config wifi-iface 'default_radio0'
+	option device 'radio0'
+	option network 'lan'
+	option mode 'ap'
+	option ssid 'BYTE'
+	option encryption 'none'
+	# 802.11k/v steer clients to the best AP/band (both radios share SSID).
+	option ieee80211k '1'
+	option ieee80211v '1'
+
+config wifi-device 'radio1'
+	option type 'mac80211'
+	option path 'platform/soc@0/c000000.wifi+1'
+	option band '2g'
+	option channel '1'
+	option htmode 'HE20'
+	option country 'US'
+	option disabled '0'
+	option cell_density '0'
+	option txpower '30'
+	# 2.4 GHz: 20 MHz only (40 MHz here hurts in practice and buries the
+	# band in interference). Channel 1 avoids the common channel-6 default.
+	option beacon_int '100'
+	option rts '2347'
+	option frag '2346'
+
+config wifi-iface 'default_radio1'
+	option device 'radio1'
+	option network 'lan'
+	option mode 'ap'
+	option ssid 'BYTE'
+	option encryption 'none'
+	option ieee80211k '1'
+	option ieee80211v '1'
