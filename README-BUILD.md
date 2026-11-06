@@ -116,15 +116,41 @@ Notes:
   `luci-theme-bootstrap` stays installed as a fallback.
 - `luci-app-byte` is vendored and its menu moved from `admin/tools` to
   `admin/services/byte`, so the BYTE panel sits in **Services**.
-- OpenClash and Nikki are **not** in the image; only what they declare is:
-  `bash`, `ruby`, `ruby-yaml`, `yq`, `kmod-inet-diag`, `kmod-dummy`,
-  `dnsmasq-full` + `dnsmasq_full_nftset`, `kmod-nft-tproxy`,
-  `kmod-nft-socket`, `kmod-tun`, `unzip`, `ip-full`, `curl`, `ca-bundle`,
-  `luci-compat`. Install `luci-app-openclash`, `nikki`/`luci-app-nikki` and
-  their cores later from their own feeds; `mihomo` is not in these feeds.
-- `builder/patches/feeds/ppe-nss/qmodem/0002-uplink-keep-flow-offload.patch`
-  stops QModem's uplink manager from zeroing `flow_offloading`/`_hw` (it still
-  clears `fullcone`). Offloaded flows still bypass the TTL rewrite.
+- **Release branding**: `CONFIG_IMAGEOPT`/`CONFIG_VERSIONOPT` are on with
+  `CONFIG_VERSION_DIST="BYTE"`; `CONFIG_VERSION_NUMBER` is injected from
+  `./VERSION` by `prepare.sh` (the `@VERSION@` placeholder in
+  `overlay/builder/local/aw1000.fragment`). `/etc/openwrt_release` and
+  Status → Overview read `BYTE <version> <revision>`, image filenames gain the
+  `BYTE-<version>-` prefix. The Status → Overview patch
+  (`0003-status-overview-hide-arch-target.patch`) drops the Architecture and
+  Target Platform rows.
+- `luci-app-passwall` (v1) menu is moved from **VPN** to **Services** and
+  renamed from "Pass Wall" to "Passwall"
+  (`0003-passwall-v1-services-menu-no-chinadns.patch`: 47 `entry()` paths and
+  the one `admin/vpn/%s` URL in `api.lua`). Its dns_mode default is `dns2tcp`.
+- **chinadns-ng is not shipped.** passwall v1's `DEPENDS` and passwall2's two
+  `select PACKAGE_chinadns-ng` lines are dropped (patch `0003` for v1, the
+  vendored `luci-app-passwall2/Makefile` for v2), so DNS goes through
+  `dnsmasq-full` + `dns2tcp`. Choosing chinadns-ng as v1's dns_mode reports
+  "not installed" — the page only offers it when the binary is present.
+- OpenClash and Nikki dependencies are **not** shipped either, so those two
+  apps cannot be installed at runtime without adding them back: `ruby`,
+  `ruby-yaml`, `yq` (18 MiB uncompressed), `kmod-inet-diag` and `kmod-dummy`
+  are all off. What passwall still needs is shipped: `bash` (v1's
+  `nftables.sh` has a `#!/bin/bash` shebang), `dnsmasq-full` +
+  `dnsmasq_full_nftset`, `kmod-nft-tproxy`, `kmod-nft-socket`, `dns2tcp`,
+  `tcping`, `unzip`, `ip-full`, `curl`, `ca-bundle`, `luci-compat`.
+  `kmod-tun` stays on for Tailscale/OpenVPN installs (the kmods feed cannot
+  serve this kernel).
+- **Wi-Fi uses `wpad-basic-mbedtls`, not `wpad-openssl`.** Covers WPA2/WPA3
+  Personal for the ATH11K APs. WPA3-Enterprise, 802.11r/vlan and mesh are not
+  available.
+- **Multi-WAN is not shipped**: `qmodem-uplink-manager`, `luci-app-qmodem-uplink`
+  (QModem IPv4 uplink balancing), `mwan3`, `luci-app-mwan3` and QModem's
+  `luci-app-qmodem-mwan` are all left out of the fragment, so there is no
+  uplink balancing and no multiwan manager in the image. One uplink: the modem.
+  Nothing else in the tree depends on them; passwall2 keeps its own mwan3 hooks
+  but they are no-ops without `/etc/init.d/mwan3`.
 - Geo databases (`v2ray-geoip`, `v2ray-geosite`, `geoview`) are not in the
   image for either passwall generation; install them if `geoip:`/`geosite:`
   rules are needed.
@@ -154,6 +180,49 @@ build reproduces them.
   disabled. Existing radios are skipped, so a user-changed SSID/key is never
   overwritten.
 - No key on purpose. LAN stays `192.168.1.1/24` with DHCP.
+
+### HTTPS certificate (why the browser warns, and what this image does)
+HTTPS is enabled in the stock config (`luci-ssl-openssl`, uhttpd listening on
+`0.0.0.0:443` and `[::]:443`, `redirect_https=1`), so `http://192.168.1.1`
+answers `307` to `https://192.168.1.1`. The warning is the certificate, not a
+missing TLS listener:
+
+- `/etc/init.d/uhttpd` `generate_keys()` builds the self-signed cert from
+  `uhttpd.defaults.commonname` and hardcodes
+  `-addext subjectAltName=DNS:"$commonname"`. Stock `commonname=OpenWrt`, so
+  the cert's only SAN is `DNS:OpenWrt` — no IP, and the box is reached as
+  `https://192.168.1.1`, which can never match. The same cert is also
+  self-signed, so a client has no reason to trust it.
+- Fix shipped here: `etc/uci-defaults/50-aw1000-tls` mints an EC P-256
+  self-signed cert with `DNS:BYTE`, `DNS:BYTE.lan` and `IP:<every address on
+  network.lan>`, mode 600 key, and sets `uhttpd.defaults.commonname=BYTE` so a
+  stock regeneration keeps the name. It runs before uhttpd starts
+  (`uci-defaults` via `init.d/boot` START=10, uhttpd START=50), regenerates only
+  when the SAN set changes (LAN address edited), a file is missing, or the cert
+  is under 7 days from expiry — a new cert every boot would invalidate the
+  browser exception each boot. Marker: `system.@system[0].aw1000_tls_san`.
+- Result: address mismatch gone; the browser still warns once because the cert
+  is self-signed. Two ways to make it silent:
+  1. **Trust the cert once per client** — download `/etc/uhttpd.crt` (LuCI:
+     System → Administration, or `scp root@192.168.1.1:/etc/uhttpd.crt .`) and
+     import it as a trusted authority. The cert rotates when the LAN address
+     changes or after 397 days, so the import has to be repeated then.
+  2. **Local CA + leaf** (not shipped) — generate a device CA once, sign the
+     leaf with it, publish the CA at `/ca.crt` for one-time install. Gives a
+     green lock with no per-cert renewal prompt, but any client that trusts
+     that CA also trusts anything signed by the router's CA key, so the key on
+     `/etc` (overlay, survives sysupgrade) is a real exposure if the box is
+     compromised.
+- A publicly trusted certificate is impossible for a bare RFC1918 address like
+  `192.168.1.1`. The only warning-free alternative without installing anything
+  on the client is a real domain with DNS-01 issuance (public DNS name pointing
+  at the LAN address + ACME), which needs internet, a domain, and a renewal
+  hook in the image.
+- Verification: `openssl x509 -in /etc/uhttpd.crt -noout -subject -ext
+  subjectAltName,extendedKeyUsage` must show `IP Address:192.168.1.1` and
+  `TLS Web Server Authentication`; `curl -sI http://192.168.1.1/` must answer
+  `307`; `curl -sI https://192.168.1.1/ --cacert /etc/uhttpd.crt` must answer
+  `200` (the hostname check passes because of the IP SAN).
 
 ### Dashboard widgets (modem / thermal / storage)
 - `aw1000-dashboard` vendors three widgets (mobile, thermal, storage), `cell.js`
@@ -308,6 +377,25 @@ not advertise zstd, zram-swap keeps its built-in default (lzo-rle).
   into `vnstat.@vnstat[0].interface` once. `vnstat2` owns
   `/etc/config/vnstat`, `/etc/init.d/vnstat` and `/etc/vnstat.conf`; this UI
   only reads the databases.
+- **Traffic widget needs rpcd ACL grants**: `view/status/include/08_stats.js`
+  does everything through `fs.exec` (`/sbin/uci get netstats.*`,
+  `/usr/bin/vnstat -i * --json`, `/usr/bin/vnstat --update`, `/usr/bin/curl *`)
+  and `fs.read_direct('/proc/net/dev')`. Without grants every call rejects and
+  the widget silently renders its fallback zeros.
+  `patches/local-feeds/aw1000/0004-luci-app-netstat-rpcd-acl.patch` adds
+  `usr/share/rpcd/acl.d/luci-app-netstat.json`. The patch also touches
+  `controller/netstat.lua` on purpose: a comment naming the ACL file gives
+  `prepare.sh` dotycat-only context — `src/aw1000_phone` carries a
+  `luci-app-netstat/` copy too, and a pure new-file diff would otherwise apply
+  to whichever repo sorts first.
+- **Storage widget**: `50_storage.js` dereferenced `root.root` a second time,
+  but `expect:{root:{}}` in the rpc declaration already unwraps the ubus reply,
+  so the card always fell to `{}` and showed "unavailable".
+- **System menu hides**: `zz-aw1000-hide-system-extras.json` hides
+  `admin/system/plugins` (Plugins), `admin/system/ppe-update` (Firmware
+  update) and `admin/system/crontab` (Scheduled Tasks) behind
+  `/etc/aw1000/show-plugins`, `show-ppe-update` and `show-crontab` — same
+  marker pattern as the vnstat2 hide: touch the marker to unhide.
 
 ## Build
 ```sh

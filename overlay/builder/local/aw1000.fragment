@@ -116,7 +116,6 @@ CONFIG_PACKAGE_qmodem-smsd=y
 CONFIG_PACKAGE_qmodem-sipd=y
 CONFIG_PACKAGE_qmodem-voip=y
 CONFIG_PACKAGE_qmodem_monitor=y
-CONFIG_PACKAGE_qmodem-uplink-manager=y
 CONFIG_PACKAGE_sms-tool_q=y
 CONFIG_PACKAGE_sms-forwarder-next=y
 CONFIG_PACKAGE_tom_modem=y
@@ -138,15 +137,11 @@ CONFIG_PACKAGE_luci-app-qmodem=y
 CONFIG_PACKAGE_luci-app-qmodem-sms=y
 CONFIG_PACKAGE_luci-app-qmodem-ttlfw4=y
 CONFIG_PACKAGE_luci-app-qmodem-voip=y
-CONFIG_PACKAGE_luci-app-qmodem-uplink=y
-CONFIG_PACKAGE_luci-app-qmodem-mwan=y
 CONFIG_PACKAGE_luci-i18n-qmodem-zh-cn=y
 CONFIG_PACKAGE_luci-i18n-qmodem-ru=y
 CONFIG_PACKAGE_luci-i18n-qmodem-sms-zh-cn=y
 CONFIG_PACKAGE_luci-i18n-qmodem-ttlfw4-zh-cn=y
 CONFIG_PACKAGE_luci-i18n-qmodem-voip-zh-cn=y
-CONFIG_PACKAGE_luci-i18n-qmodem-uplink-zh-cn=y
-CONFIG_PACKAGE_luci-i18n-qmodem-mwan-zh-cn=y
 ## voip chain: these are unselected leaves, so qmodem-voip resolved to =m and
 ## dropped out of the image; force them =y so the SIP stack ships
 CONFIG_PACKAGE_adb=y
@@ -167,7 +162,8 @@ CONFIG_PACKAGE_libpjsip-ua=y
 ## nss-firmware but no qca-nss-ecm, so the offload counters never existed.
 ## luci-mod-dashboard is patched (patches/feeds/ppe-nss/luci/
 ## 0001-dashboard-hide-tabs-and-layout.patch): the bottom detail tabs and the
-## Layout editor are hidden.
+## Layout editor are hidden. 0002-dashboard-hide-wan-traffic-chart.patch drops
+## the WAN rx/tx chart from the charts row.
 CONFIG_PACKAGE_luci-mod-dashboard=y
 CONFIG_PACKAGE_aw1000-dashboard=y
 
@@ -220,31 +216,53 @@ CONFIG_PACKAGE_kmod-pcie_mhi_nss=n
 ## One page for AdGuard Home setup/status, the DNS chain and system state.
 ## Local vendor patches the upstream menu from admin/tools to admin/services.
 CONFIG_PACKAGE_luci-app-byte=y
-# --- OpenClash / Nikki: dependencies only, apps deliberately absent ---
-## The LuCI apps and their cores are NOT shipped; install them at runtime
-## (opkg/apk or a feed) and everything they declare is already here.
-## OpenClash: +dnsmasq-full +bash +curl +ca-bundle +ip-full +ruby +ruby-yaml
-##            +kmod-tun +unzip, plus its config-menu picks for firewall4:
-##            kmod-inet-diag, luci-compat, kmod-nft-tproxy, dnsmasq_full_nftset
-## Nikki:     ca-bundle curl yq firewall4 ip-full kmod-inet-diag kmod-nft-socket
-##            kmod-nft-tproxy kmod-tun kmod-dummy (mihomo is its own dep and is
-##            not in these feeds, so it stays out)
+# --- Release branding: /etc/openwrt_release + Status -> Overview ---
+## IMAGEOPT/ VERSIONOPT expose the version symbols; DISTRIB_DESCRIPTION becomes
+## "BYTE <version> <revision>". CONFIG_VERSION_NUMBER is filled from ./VERSION
+## by prepare-build.sh (the repo's VERSION file is the single source of truth).
+CONFIG_IMAGEOPT=y
+CONFIG_VERSIONOPT=y
+CONFIG_VERSION_DIST="BYTE"
+## CONFIG_VERSION_NUMBER is substituted from ./VERSION by prepare.sh
+## (@VERSION@ placeholder); the VERSION file is the single source of truth.
+CONFIG_VERSION_NUMBER="@VERSION@"
+# --- Proxy apps: passwall v1 + passwall2, cores pinned to Xray ---
+## The LuCI apps ship; the proxy cores they can optionally pull (v2ray,
+## shadowsocks, trojan, hysteria, naive, sing-box) do not. Only what passwall
+## v1/v2 DEPEND on stays: curl, ip-full, resolveip, unzip, tcping, dns2tcp,
+## bash (v1's nftables.sh has a #!/bin/bash shebang), dnsmasq-full with the
+## nftset module, and the nftables proxy hooks kmod-nft-tproxy/kmod-nft-socket.
+## OpenClash / Nikki dependencies are NOT shipped any more: ruby, ruby-yaml and
+## yq (18 MiB uncompressed) are gone, so are kmod-inet-diag and kmod-dummy.
+## Those two apps cannot be installed at runtime without adding them back.
+## chinadns-ng is off as well: passwall v1's DEPENDS and passwall2's config
+## selects are dropped (patches/local-feeds/aw1000/0003 for v1, the vendored
+## luci-app-passwall2 Makefile for v2), so DNS goes through dnsmasq + dns2tcp
+## (v1's default dns_mode is dns2tcp). Selecting chinadns-ng as v1's dns_mode
+## will report "not installed"; the page only offers it if the binary is found.
 CONFIG_PACKAGE_bash=y
-CONFIG_PACKAGE_ruby=y
-CONFIG_PACKAGE_ruby-yaml=y
-CONFIG_PACKAGE_yq=y
-CONFIG_PACKAGE_kmod-inet-diag=y
-CONFIG_PACKAGE_kmod-dummy=y
 CONFIG_PACKAGE_dnsmasq-full=y
 CONFIG_PACKAGE_dnsmasq_full_nftset=y
 CONFIG_PACKAGE_kmod-nft-tproxy=y
 CONFIG_PACKAGE_kmod-nft-socket=y
-CONFIG_PACKAGE_kmod-tun=y
+CONFIG_PACKAGE_chinadns-ng=n
+CONFIG_PACKAGE_ruby=n
+CONFIG_PACKAGE_ruby-yaml=n
+CONFIG_PACKAGE_yq=n
+CONFIG_PACKAGE_kmod-inet-diag=n
+CONFIG_PACKAGE_kmod-dummy=n
+## kmod-tun stays on (builder/devices/common/config): Tailscale/OpenVPN install
+## at runtime, and the kmods feed cannot serve this kernel, so without it in
+## the image those installs would fail. ~30 KiB, not worth breaking.
 CONFIG_PACKAGE_unzip=y
 CONFIG_PACKAGE_ip-full=y
 CONFIG_PACKAGE_curl=y
 CONFIG_PACKAGE_ca-bundle=y
 CONFIG_PACKAGE_luci-compat=y
+## Wi-Fi: full wpad-openssl (WPA3-Enterprise, 802.11r/vlan, mesh) is not
+## needed; wpad-basic-mbedtls covers WPA2/WPA3-Personal for the ATH11K APs.
+CONFIG_PACKAGE_wpad-openssl=n
+CONFIG_PACKAGE_wpad-basic-mbedtls=y
 # --- Build only the kernel modules we actually select ---
 ## The builder's common config sets CONFIG_ALL_KMODS=y, which makes the world
 ## build compile every kmod package in every feed (~1100 modules). Any legacy

@@ -1,0 +1,40 @@
+diff --git a/luci-app-netstat/files/usr/lib/lua/luci/controller/netstat.lua b/luci-app-netstat/files/usr/lib/lua/luci/controller/netstat.lua
+index d676c3c..8037d87 100644
+--- a/luci-app-netstat/files/usr/lib/lua/luci/controller/netstat.lua
++++ b/luci-app-netstat/files/usr/lib/lua/luci/controller/netstat.lua
+@@ -1,5 +1,7 @@
+ module("luci.controller.netstat", package.seeall)
+-
++-- The Status widget in 08_stats.js runs /sbin/uci, /usr/bin/vnstat --json,
++-- /usr/bin/curl and reads /proc/net/dev through fs.exec/fs.read_direct; the
++-- grants for those live in files/usr/share/rpcd/acl.d/luci-app-netstat.json.
+ function index()
+     entry({"admin", "tools"}, firstchild(), _("Tools"), 50).dependent = false
+     entry({"admin", "tools", "netstat_config"}, cbi("netstat/config"), _("Netstat Config"), 20).leaf = true
+diff --git a/luci-app-netstat/files/usr/share/rpcd/acl.d/luci-app-netstat.json b/luci-app-netstat/files/usr/share/rpcd/acl.d/luci-app-netstat.json
+new file mode 100644
+index 0000000..07a344d
+--- /dev/null
++++ b/luci-app-netstat/files/usr/share/rpcd/acl.d/luci-app-netstat.json
+@@ -0,0 +1,21 @@
++{
++	"luci-app-netstat": {
++		"description": "Grant access to the traffic widget on the Status homepage",
++		"read": {
++			"file": {
++				"/proc/net/dev": [ "read" ],
++				"/sbin/uci get netstats.*": [ "exec" ],
++				"/usr/bin/curl *": [ "exec" ],
++				"/usr/bin/vnstat -i * --json": [ "exec" ]
++			},
++			"ubus": {
++				"file": [ "exec", "read", "stat" ]
++			}
++		},
++		"write": {
++			"file": {
++				"/usr/bin/vnstat --update": [ "exec" ]
++			}
++		}
++	}
++}

@@ -31,7 +31,10 @@ return baseclass.extend({
 		return L.resolveDefault(callSystemInfo(), null);
 	},
 	render(root) {
-		root = (root && L.isObject(root.root)) ? root.root : {};
+		// expect:{root:{}} already unwraps the ubus reply to the object inside
+		// "root"; dereferencing root.root here would always miss and show
+		// "unavailable".
+		root = L.isObject(root) ? root : {};
 		var total = (root.total != null) ? +root.total : null,
 		    used = (root.used != null) ? +root.used : null,
 		    free = (total != null && used != null) ? total - used : null,

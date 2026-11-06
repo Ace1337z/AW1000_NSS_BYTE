@@ -1,0 +1,15 @@
+diff --git a/modules/luci-mod-dashboard/htdocs/luci-static/resources/view/dashboard/index.js b/modules/luci-mod-dashboard/htdocs/luci-static/resources/view/dashboard/index.js
+index c6fbe90..a9463a7 100644
+--- a/modules/luci-mod-dashboard/htdocs/luci-static/resources/view/dashboard/index.js
++++ b/modules/luci-mod-dashboard/htdocs/luci-static/resources/view/dashboard/index.js
+@@ -295,6 +295,10 @@ return view.extend({
+ 				// Local: no detail tabs. Emptying the slot also skips the
+ 				// includes that only fill a tab (DHCP leases, iwinfo clients).
+ 				layout.tabs = [];
++				// Local: hide the WAN traffic chart too. The rx/tx graph on the
++				// uplink is off; the mobile card already shows the modem counters.
++				// Dropping the id skips the whole include, so nothing is polled.
++				layout.charts = layout.charts.filter(id => id !== 'wan');
+ 				return [ includes, layout ];
+ 			});
+ 		});

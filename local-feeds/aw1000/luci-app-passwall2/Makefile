@@ -52,7 +52,6 @@ if PACKAGE_$(PKG_NAME)
 
 config PACKAGE_$(PKG_NAME)_Iptables_Transparent_Proxy
 	bool "Iptables Transparent Proxy"
-	select PACKAGE_chinadns-ng
 	select PACKAGE_dnsmasq-full
 	select PACKAGE_dnsmasq_full_ipset
 	select PACKAGE_ipset
@@ -68,7 +67,6 @@ config PACKAGE_$(PKG_NAME)_Iptables_Transparent_Proxy
 
 config PACKAGE_$(PKG_NAME)_Nftables_Transparent_Proxy
 	bool "Nftables Transparent Proxy"
-	select PACKAGE_chinadns-ng
 	select PACKAGE_dnsmasq-full
 	select PACKAGE_dnsmasq_full_nftset
 	select PACKAGE_nftables

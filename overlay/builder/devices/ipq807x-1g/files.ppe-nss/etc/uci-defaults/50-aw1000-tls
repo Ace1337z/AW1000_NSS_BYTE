@@ -1,0 +1,92 @@
+#!/bin/sh
+# HTTPS certificate with the names the box is actually reached by.
+#
+# Why this exists: /etc/init.d/uhttpd's generate_keys() derives the self-signed
+# cert from uhttpd.defaults.commonname and hardcodes
+#   -addext subjectAltName=DNS:"$commonname"
+# so the stock cert only ever carries DNS:OpenWrt. Reaching the box the normal
+# way, https://192.168.1.1, then fails hostname verification and the browser
+# shows "Not secure" even though TLS is up and the HTTP->HTTPS redirect works.
+#
+# This script mints the same throwaway self-signed EC P-256 cert, but with
+#   DNS:BYTE  DNS:BYTE.lan  IP:<every address on network.lan>
+# The address no longer mismatches, so the only remaining warning is the
+# one-time "self-signed certificate" trust prompt. For a warning-free UI,
+# import /etc/uhttpd.crt once into the client trust store (README-BUILD.md,
+# "HTTPS certificate").
+#
+# Regeneration policy: only when the desired SAN set changes (LAN address
+# edited), the files are missing/empty, or the cert is under 7 days from
+# expiry. Regenerating on every boot would throw away the browser exception
+# the user accepted on the previous boot.
+#
+# Runs from /etc/uci-defaults via /etc/init.d/boot (START=10), i.e. before
+# uhttpd starts (START=50); the restart below only matters on the sysupgrade
+# path, where uhttpd may already be running when these scripts are re-run.
+
+CERT=/etc/uhttpd.crt
+KEY=/etc/uhttpd.key
+
+[ -x /usr/bin/openssl ] || exit 0
+
+san=""
+add_san() {
+	case ",$san," in
+	*",$1,"*) ;;
+	*) san="${san:+$san,}$1" ;;
+	esac
+}
+
+add_san "DNS:BYTE"
+add_san "DNS:BYTE.lan"
+
+for addr in $(uci -q get network.lan.ipaddr); do
+	ip="${addr%%/*}"
+	case "$ip" in
+	'' | *[!0-9a-fA-F:.]*) continue ;;
+	esac
+	add_san "IP:$ip"
+done
+
+# Marker lives in /etc/config/system, so a settings-keeping sysupgrade keeps
+# it and skips regeneration when nothing changed.
+cur="$(uci -q get system.@system[0].aw1000_tls_san)"
+need=1
+if [ "$cur" = "$san" ] && [ -s "$CERT" ] && [ -s "$KEY" ] &&
+	openssl x509 -in "$CERT" -noout -checkend 604800 >/dev/null 2>&1; then
+	need=0
+fi
+[ "$need" = 0 ] && exit 0
+
+# Scratch dir on /etc (same filesystem as the targets) so the two mv calls are
+# renames, not copies: /tmp is tmpfs and a cross-device mv could leave a
+# half-written cert or key behind on ENOSPC.
+tmpd="$(mktemp -d /etc/.aw1000-tls.XXXXXX)" || exit 0
+trap 'rm -rf "$tmpd"' EXIT
+
+# PEM output: ustream-openssl tries PEM first and falls back to DER, so both
+# new and old uhttpd/libustream builds read it.
+if ! openssl req -x509 -sha256 -days 397 -nodes \
+	-newkey ec -pkeyopt ec_paramgen_curve:P-256 \
+	-keyout "$tmpd/key" -out "$tmpd/crt" \
+	-subj "/C=US/ST=BYTE/L=BYTE/O=BYTE/CN=BYTE" \
+	-addext "subjectAltName=$san" \
+	-addext "extendedKeyUsage=serverAuth" \
+	-addext "basicConstraints=critical,CA:FALSE" >/dev/null 2>&1; then
+	logger -t aw1000-tls "certificate generation failed, keeping existing files"
+	exit 0
+fi
+chmod 600 "$tmpd/key"
+mv -f "$tmpd/key" "$KEY"
+mv -f "$tmpd/crt" "$CERT"
+
+uci -q set system.@system[0].aw1000_tls_san="$san"
+uci -q commit system
+
+# Keep the stock generator aligned for the case these files are ever deleted:
+# a regenerated cert then still says CN=BYTE / DNS:BYTE instead of OpenWrt.
+uci -q set uhttpd.defaults.commonname='BYTE'
+uci -q commit uhttpd
+
+pidof uhttpd >/dev/null 2>&1 && /etc/init.d/uhttpd restart >/dev/null 2>&1
+exit 0

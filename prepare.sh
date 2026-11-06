@@ -9,6 +9,12 @@ cd "$(dirname "$0")"
 [ -d builder/.git ] || { echo "missing builder/ checkout - run ./ci/bootstrap.sh first" >&2; exit 1; }
 cp -a overlay/builder/. builder/
 
+# Substitute the release version from ./VERSION (single source of truth) into
+# the staged config fragment before prepare-build.sh assembles .config, so
+# /etc/openwrt_release and Status -> Overview carry "BYTE <version>".
+VERSION_CUR="$(tr -d '[:space:]' < VERSION)"
+sed -i "s/@VERSION@/$VERSION_CUR/g" builder/local/aw1000.fragment
+
 # The Si32261 DSP patch is a vendor binary. It is stored base64 so the repo is
 # pure text (reviewable diffs, no binary blob in git history); decode it into
 # the overlay tree here. md5 3778fa32bf3a6e0ceab599778ed5149e.

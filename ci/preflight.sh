@@ -29,6 +29,7 @@ OVERLAY_DEV="$ROOT/builder/devices/ipq807x-1g/files.ppe-nss"
 STAGED="$ROOT/openwrt/files"
 CONFIG="$ROOT/openwrt/.config"
 PATCH_FEEDS="$ROOT/builder/patches/feeds"
+VARIANT="ppe-nss" # variant id, matches files.<variant> and patches/feeds/<variant>
 BLOB_MD5=3778fa32bf3a6e0ceab599778ed5149e
 
 head2 "version and layout"
@@ -154,22 +155,37 @@ fi
 
 head2 "feed patches"
 if [ -d "$PATCH_FEEDS" ]; then
+	# Patches in one feed directory are applied in sort order and stack on top
+	# of each other (0001 and 0002 both touch the luci-mod-dashboard index.js),
+	# so they cannot be checked one by one against the prepared tree: after
+	# prepare.sh every patch is applied, and after the second one the first
+	# patch no longer reverses cleanly (its context now contains lines the next
+	# patch added). Instead take a pristine copy of the pinned feed HEAD and
+	# apply the whole group forward, exactly as builder/scripts/prepare-build.sh
+	# does. Anything that fails means the pin moved under the patch.
 	patch_n=0
-	while IFS= read -r p; do
-		patch_n=$((patch_n + 1))
-		feed="$(printf '%s' "${p#"$PATCH_FEEDS"/}" | cut -d/ -f2)"
+	while IFS= read -r feed; do
+		feed="${feed#*/}" # <variant>/<feed> -> <feed>
+		readarray -t feed_patches < <(find "$PATCH_FEEDS/$VARIANT/$feed" -type f -name '*.patch' | sort)
+		[ "${#feed_patches[@]}" -gt 0 ] || continue
 		dir="$ROOT/openwrt/feeds/$feed"
 		if [ ! -d "$dir/.git" ]; then
-			bad "patch $feed/$(basename "$p"): feeds/$feed is not a git checkout"
-		elif git -C "$dir" apply --check -R "$p" 2>/dev/null; then
-			: # applied, as expected after prepare.sh
-		elif git -C "$dir" apply --check "$p" 2>/dev/null; then
-			bad "$feed/$(basename "$p") not applied (prepare.sh should have done it)"
-		else
-			bad "$feed/$(basename "$p") neither applies nor reverses - feed moved?"
+			bad "patch $feed: feeds/$feed is not a git checkout"
+			continue
 		fi
-	done < <(find "$PATCH_FEEDS" -type f -name '*.patch' | sort)
-	ok "$patch_n builder patches verified against pinned feeds"
+		tmp="$(mktemp -d "${TMPDIR:-/tmp}/feedcheck.XXXXXX")"
+		git -C "$dir" archive HEAD | tar -xf - -C "$tmp"
+		rc=0
+		for p in "${feed_patches[@]}"; do
+			patch -p1 -d "$tmp" --forward <"$p" >/dev/null 2>&1 || rc=1
+		done
+		rm -rf "$tmp"
+		if [ "$rc" -ne 0 ]; then
+			bad "$feed patches do not apply to the pinned feed HEAD (feed moved?):${feed_patches[*]}"
+		fi
+		patch_n=$((patch_n + ${#feed_patches[@]}))
+	done < <(find "$PATCH_FEEDS" -mindepth 2 -maxdepth 2 -type d | sort | sed "s|$PATCH_FEEDS/||")
+	ok "$patch_n builder patches verified against pinned feeds (pristine HEAD, cumulative per feed)"
 fi
 
 head2 "local-feed patches"

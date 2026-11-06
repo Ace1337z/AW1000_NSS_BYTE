@@ -1,0 +1,23 @@
+{
+	"admin/system/plugins": {
+		"depends": {
+			"fs": {
+				"/etc/aw1000/show-plugins": "file"
+			}
+		}
+	},
+	"admin/system/ppe-update": {
+		"depends": {
+			"fs": {
+				"/etc/aw1000/show-ppe-update": "file"
+			}
+		}
+	},
+	"admin/system/crontab": {
+		"depends": {
+			"fs": {
+				"/etc/aw1000/show-crontab": "file"
+			}
+		}
+	}
+}
