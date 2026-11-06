@@ -1,37 +1,27 @@
-include $(TOPDIR)/rules.mk
-PKG_NAME:=luci-app-byte
-PKG_VERSION:=1.0.0
-PKG_RELEASE:=1
-PKG_MAINTAINER:=Ace1337z
-PKG_LICENSE:=GPL-3.0
-LUCI_TITLE:=BYTE - one page for the firmware's own services
-LUCI_DESCRIPTION:=Integrated control panel: AdGuard Home setup and status, DNS chain, system state and shortcuts to the pages this firmware ships.
-# luci-base gives the JS framework, rpcd the exec plugin host, jshn the JSON
-# helpers used by /usr/libexec/rpcd/byte.
-LUCI_DEPENDS:=+luci-base +rpcd +libubox +jsonfilter +ubus
-include $(TOPDIR)/feeds/luci/luci.mk
+#
+# Copyright (C) 2026 Ace1337z
+#
+# This is free software, licensed under the GNU General Public License v3.
+#
 
-define Package/luci-app-byte/install
-	$(INSTALL_DIR) $(1)/usr/libexec/luci-app-byte
-	$(INSTALL_BIN) ./root/usr/libexec/luci-app-byte/agh-passwall2.sh \
-		$(1)/usr/libexec/luci-app-byte/agh-passwall2.sh
-	$(INSTALL_DIR) $(1)/usr/libexec/rpcd
-	$(INSTALL_BIN) ./root/usr/libexec/rpcd/byte $(1)/usr/libexec/rpcd/byte
-	$(INSTALL_DIR) $(1)/usr/share/rpcd/acl.d
-	$(INSTALL_DATA) ./root/usr/share/rpcd/acl.d/luci-app-byte.json \
-		$(1)/usr/share/rpcd/acl.d/luci-app-byte.json
-	$(INSTALL_DIR) $(1)/usr/share/luci/menu.d
-	$(INSTALL_DATA) ./root/usr/share/luci/menu.d/luci-app-byte.json \
-		$(1)/usr/share/luci/menu.d/luci-app-byte.json
-	$(INSTALL_DIR) $(1)/www/luci-static/resources/view/byte
-	$(INSTALL_DATA) ./htdocs/luci-static/resources/view/byte/overview.js \
-		$(1)/www/luci-static/resources/view/byte/overview.js
-	$(INSTALL_DIR) $(1)/etc/uci-defaults
-	$(INSTALL_BIN) ./root/etc/uci-defaults/90-luci-app-byte \
-		$(1)/etc/uci-defaults/90-luci-app-byte
-	$(INSTALL_DIR) $(1)/www/luci-static/resources/byte
-	$(INSTALL_DATA) ./htdocs/luci-static/resources/byte/byte.css \
-		$(1)/www/luci-static/resources/byte/byte.css
-endef
+include $(TOPDIR)/rules.mk
+
+PKG_NAME:=luci-app-byte
+PKG_VERSION:=1.0.1
+PKG_RELEASE:=1
+
+PKG_MAINTAINER:=Ace1337z
+PKG_LICENSE:=GPL-3.0-only
+
+LUCI_TITLE:=BYTE - AdGuard Home + PassWall2 one-page panel
+LUCI_DESCRIPTION:=Single LuCI page under Tools to install, wire, inspect and undo the AdGuard Home + PassWall2 DNS chain. Ships the vendored upstream installer, so no runtime network fetch.
+# luci-base: JS framework + resource loading. rpcd: the ubus exec plugin host.
+# libubox/jsonfilter: jshn.sh + jsonfilter used by the backend script.
+LUCI_DEPENDS:=+luci-base +rpcd +libubox +jsonfilter +ubus
+
+# luci.mk installs ./htdocs -> /www and ./root -> / automatically, so the
+# menu json, rpcd acl, backend script, uci-defaults and the vendored installer
+# all land in the right place without a custom Package/install block.
+include $(TOPDIR)/feeds/luci/luci.mk
 
 $(eval $(call BuildPackage,luci-app-byte))

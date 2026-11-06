@@ -4,10 +4,11 @@
 'require poll';
 'require ui';
 
-var callStatus = rpc.declare({ object: 'byte', method: 'status' });
-var callSetup  = rpc.declare({ object: 'byte', method: 'setup' });
-var callAction = rpc.declare({ object: 'byte', method: 'action', params: [ 'name' ] });
-var callLog    = rpc.declare({ object: 'byte', method: 'log', params: [ 'lines' ] });
+var callStatus    = rpc.declare({ object: 'byte', method: 'status' });
+var callSetup     = rpc.declare({ object: 'byte', method: 'setup', params: [ 'dry_run' ] });
+var callUninstall = rpc.declare({ object: 'byte', method: 'uninstall', params: [ 'purge' ] });
+var callAction    = rpc.declare({ object: 'byte', method: 'action', params: [ 'name' ] });
+var callLog       = rpc.declare({ object: 'byte', method: 'log', params: [ 'lines' ] });
 
 var CSS_URL = L.resource('byte/byte.css');
 
@@ -36,9 +37,17 @@ function card(title, hint, body, wide) {
 }
 
 function aghTone(s) {
-	if (!s.installed)
+	if (!s.agh.installed)
 		return [ 'Not installed', 'idle' ];
-	if (s.running)
+	if (s.agh.running)
+		return [ 'Running', 'ok' ];
+	return [ 'Installed, stopped', 'warn' ];
+}
+
+function pwTone(s) {
+	if (!s.passwall)
+		return [ 'Not installed', 'idle' ];
+	if (s.passwall.running)
 		return [ 'Running', 'ok' ];
 	return [ 'Installed, stopped', 'warn' ];
 }
@@ -58,6 +67,13 @@ function stripAnsi(s) {
 	return (s || '').replace(/\x1b\[[0-9;]*m/g, '');
 }
 
+/* A run that finished non-zero is a failure even if the log ends cleanly.
+ * The vendor installer traps EXIT for rollback, so exit code is the only
+ * reliable signal; anything else (crash, kill) also reports the raw code. */
+function runFailed(res) {
+	return res.started && res.exit !== 0;
+}
+
 return view.extend({
 	load: function() {
 		return callStatus();
@@ -70,14 +86,41 @@ return view.extend({
 		var self = this;
 
 		return ui.showModal(_('Install and wire AdGuard Home'), [
-			E('p', {}, [ _('This installs AdGuard Home (and its LuCI app if missing) from this firmware\'s own opkg repository, then wires it to PassWall2 without DNS or port conflicts:') ]),
+			E('p', {}, [ _('This installs AdGuard Home (and its LuCI app if missing) from this firmware\'s own repository, then wires it to PassWall2 without DNS or port conflicts:') ]),
 			E('ul', { 'style': 'margin:0;padding-left:18px;font-size:12.5px;line-height:1.6' }, [
 				E('li', {}, [ _('dnsmasq moves to port 54, AdGuard Home takes port 53') ]),
 				E('li', {}, [ _('AdGuard upstream becomes PassWall2 DNS on 127.0.0.1:15353') ]),
 				E('li', {}, [ _('.lan / .local / .home.arpa keep resolving through dnsmasq') ]),
-				E('li', {}, [ _('SafeSearch/parental filtering is turned off') ])
+				E('li', {}, [ _('SafeSearch/parental filtering is turned off') ]),
+				E('li', {}, [ _('A rollback manifest is kept, and a health watchdog is installed') ])
 			]),
 			E('p', { 'class': 'byte-note' }, [ _('Existing configs are backed up before they are touched. Nothing is proxied for you: PassWall2 nodes are still yours to add.') ]),
+			E('div', { 'class': 'button-row' }, [
+				E('button', {
+					'class': 'btn cbi-button',
+					'click': function() { ui.hideModal(); return self.startRun('setup', 0); }
+				}, [ _('Dry run first') ]),
+				E('button', {
+					'class': 'btn cbi-button',
+					'click': ui.hideModal
+				}, [ _('Cancel') ]),
+				E('button', {
+					'class': 'btn cbi-button cbi-button-apply',
+					'click': function() {
+						ui.hideModal();
+						return self.startRun('setup', 1);
+					}
+				}, [ _('Install and wire') ])
+			])
+		]);
+	},
+
+	handleUninstall: function(ev) {
+		var self = this;
+
+		return ui.showModal(_('Undo the AdGuard Home wiring'), [
+			E('p', {}, [ _('This stops the setup run in reverse: dnsmasq returns to port 53, PassWall2 DNS redirect is restored, and the firewall rules are removed. Your AdGuard Home configuration is kept.') ]),
+			E('p', { 'class': 'byte-note' }, [ _('Backups stay in the state directory; nothing is deleted unless you purge.') ]),
 			E('div', { 'class': 'button-row' }, [
 				E('button', {
 					'class': 'btn cbi-button',
@@ -87,9 +130,9 @@ return view.extend({
 					'class': 'btn cbi-button cbi-button-apply',
 					'click': function() {
 						ui.hideModal();
-						return self.startSetup();
+						return self.startRun('uninstall', 0);
 					}
-				}, [ _('Install and wire') ])
+				}, [ _('Undo wiring') ])
 			])
 		]);
 	},
@@ -97,13 +140,16 @@ return view.extend({
 	/* Terminal view: the backend starts the installer detached and this loop
 	 * tails its log once a second, so long opkg downloads are visible live
 	 * instead of a frozen "Working" spinner. */
-	startSetup: function() {
+	startRun: function(mode, commit) {
 		var self = this,
 		    term = E('pre', { 'class': 'byte-log' }, [ _('Starting…') ]),
 		    state = E('p', { 'class': 'byte-note' }, [ _('Requesting installer…') ]),
-		    live = true;
+		    live = true,
+		    call = (mode === 'uninstall') ? callUninstall : callSetup;
 
-		ui.showModal(_('AdGuard Home setup - live output'), [
+		ui.showModal(mode === 'uninstall'
+			? _('AdGuard Home undo - live output')
+			: _('AdGuard Home setup - live output'), [
 			state,
 			term,
 			E('div', { 'class': 'button-row' }, [
@@ -131,10 +177,14 @@ return view.extend({
 					window.setTimeout(tick, 1000);
 				}
 				else if (res.started) {
-					var ok = (res.exit === 0);
-					state.textContent = ok
-						? _('Finished successfully (exit 0).')
-						: _('Finished with errors (exit %d) - see the tail of the log above.').format(res.exit);
+					if (res.exit === 0) {
+						state.textContent = commit
+							? _('Finished successfully (exit 0).')
+							: _('Dry run finished - nothing was changed. Review the plan above, then run it for real.');
+					}
+					else {
+						state.textContent = _('Finished with errors (exit %d) - see the tail of the log above.').format(res.exit);
+					}
 					self.refresh();
 				}
 				else {
@@ -148,7 +198,7 @@ return view.extend({
 			});
 		}
 
-		return callSetup().then(function(res) {
+		return call(mode === 'uninstall' ? 0 : (commit ? 1 : 0)).then(function(res) {
 			if (!res || !res.ok) {
 				state.textContent = (res && res.message) || _('Could not start the installer.');
 				return;
@@ -190,7 +240,8 @@ return view.extend({
 		if (!document.querySelector('link[href="' + CSS_URL + '"]'))
 			document.head.appendChild(E('link', { rel: 'stylesheet', href: CSS_URL }));
 
-		var tone = aghTone(status);
+		var tone = aghTone(status),
+		    ptone = pwTone(status);
 
 		var aghBody = [
 			E('div', { 'class': 'byte-actions' }, [
@@ -224,11 +275,27 @@ return view.extend({
 				[ _('Version'), status.agh.version || '-' ],
 				[ _('Web interface'), status.agh.web || '-' ],
 				[ _('DNS port'), status.agh.dns_port || '-' ],
+				[ _('Service'), status.agh.service === 'feed' ? _('feed package') : (status.agh.service === 'vendor' ? _('vendor build') : '-') ],
 				[ _('Autostart'), status.agh.enabled ? _('enabled') : _('disabled') ]
 			]),
 			E('p', { 'class': 'byte-note' }, [ status.agh.installed
 				? _('AdGuard Home is served from this firmware\'s repository. Filtering lists, clients and query log live in AdGuard\'s own web UI, linked above.')
 				: _('AdGuard Home is not installed. The installer pulls it from this firmware\'s repository, moves dnsmasq to port 54 and keeps PassWall2 as the upstream resolver.') ])
+		];
+
+		var pwBody = [
+			kv([
+				[ _('State'), ptone[0] ],
+				[ _('Configured nodes'), status.passwall ? String(status.passwall.nodes) : '-' ]
+			]),
+			E('p', { 'class': 'byte-note' }, [
+				_('Add and choose proxy nodes in the PassWall2 page. The BYTE installer never adds a node for you.'),
+				' ',
+				E('a', {
+					'href': L.url('admin', 'services', 'passwall2'),
+					'class': 'byte-link'
+				}, [ _('Open PassWall2') ])
+			])
 		];
 
 		var chainBody = [
@@ -274,6 +341,7 @@ return view.extend({
 
 			E('div', { 'class': 'byte-grid' }, [
 				card(_('AdGuard Home'), status.agh.installed ? (status.agh.version || '') : _('not installed'), aghBody, true),
+				card(_('PassWall2'), _('proxy nodes'), pwBody),
 				card(_('DNS chain'), _('who answers what'), chainBody)
 			]),
 
@@ -294,7 +362,8 @@ return view.extend({
 				E('span', {}, [ _('BYTE by ACE') ]),
 				E('span', {}, [ status.system.release || '' ]),
 				E('span', {}, [ status.system.model || '' ]),
-				E('span', {}, [ status.system.kernel || '' ])
+				E('span', {}, [ status.system.kernel || '' ]),
+				status.installer_pin ? E('span', { 'class': 'byte-pin' }, [ 'installer ' + status.installer_pin ]) : ''
 			])
 		]);
 	},

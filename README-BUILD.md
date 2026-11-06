@@ -38,8 +38,8 @@ symlinks, because they are locally modified:
 - `luci-app-passwall2/` — upstream 26.4.10 with the geodata/GeoView deps removed.
 - `aw1000-dashboard/` — the dashboard half of XT-Martinez/aw1000-feed, with the
   NSS card replaced by a Storage card.
-- `luci-app-byte/` — Ace1337z/AW1000_BYTE `packages/luci-app-byte`, menu moved
-  to Services.
+- `luci-app-byte/` — vendored from Ace1337z/luci-app-byte (standalone repo), menu
+  under Tools.
 - `dns2tcp/` — copied from the ImmortalWrt packages feed (PassWall v1 default
   DNS mode), not published upstream here.
 
@@ -82,7 +82,7 @@ symlinks, because they are locally modified:
 | vnstat2 | packages feed | 2.14-r1 |
 | sms-tool_q | FUjr/QModem @ b4effcd (feed) | 3.4.0_rc3-r0 |
 | aw1000-dashboard | vendored from XT-Martinez/aw1000-feed @ a7e14ad | 1-r1 |
-| luci-app-byte | Ace1337z/AW1000_BYTE @ c3afe91 `packages/` (menu moved to Services) | 1.0.0-r1 |
+| luci-app-byte | vendored from Ace1337z/luci-app-byte (standalone, menu under Tools) | 1.0.1-r1 |
 
 Notes:
 - Xray only: every `INCLUDE_*` of both passwall packages is pinned `n`. No
@@ -114,8 +114,8 @@ Notes:
   after the theme's `30_*`, is skipped if `/www/luci-static/footstrap` is
   missing, and never runs again, so a theme chosen later is kept).
   `luci-theme-bootstrap` stays installed as a fallback.
-- `luci-app-byte` is vendored and its menu moved from `admin/tools` to
-  `admin/services/byte`, so the BYTE panel sits in **Services**.
+- `luci-app-byte` is vendored from `Ace1337z/luci-app-byte` (standalone, menu
+  at `admin/tools/byte`), so the BYTE panel sits in **Tools**.
 - **Release branding**: `CONFIG_IMAGEOPT`/`CONFIG_VERSIONOPT` are on with
   `CONFIG_VERSION_DIST="BYTE"`; `CONFIG_VERSION_NUMBER` is injected from
   `./VERSION` by `prepare.sh` (the `@VERSION@` placeholder in

@@ -1,0 +1,29 @@
+diff --git a/application/qmodem_sipd/src/sip_gateway.c b/application/qmodem_sipd/src/sip_gateway.c
+index d11002b..2ad31ac 100644
+--- a/application/qmodem_sipd/src/sip_gateway.c
++++ b/application/qmodem_sipd/src/sip_gateway.c
+@@ -381,7 +381,7 @@ enum qmodem_voip_sip_nonce_result qmodem_voip_sip_nonce_check(
+ 		struct qmodem_voip_sip_nonce *slot = &store->slots[i];
+ 		if (slot->address != address || strcmp(slot->value, nonce) != 0)
+ 			continue;
+-		if (now < slot->issued || now - slot->issued >= 60)
++		if (now < slot->issued || now - slot->issued >= QMODEM_VOIP_SIP_NONCE_LIFETIME)
+ 			return QMODEM_VOIP_SIP_NONCE_EXPIRED;
+ 		if (nc == 0 || nc <= slot->last_nc)
+ 			return QMODEM_VOIP_SIP_NONCE_REPLAYED;
+diff --git a/application/qmodem_sipd/src/sip_gateway.h b/application/qmodem_sipd/src/sip_gateway.h
+index 444a665..98e42d7 100644
+--- a/application/qmodem_sipd/src/sip_gateway.h
++++ b/application/qmodem_sipd/src/sip_gateway.h
+@@ -12,6 +12,11 @@
+ #endif
+ #define QMODEM_VOIP_SIP_NONCE_SIZE 33
+ #define QMODEM_VOIP_SIP_NONCE_SLOTS 32
++/* Nonces must outlive the refresh interval of every client so a re-REGISTER
++ * (typically at half the registration expiry, i.e. 150s for expires=300)
++ * never trips an extra 401 challenge. 3600 covers the maximum registration
++ * lifetime the server accepts. */
++#define QMODEM_VOIP_SIP_NONCE_LIFETIME 3600
+ #define QMODEM_VOIP_SIP_CALL_ID_SIZE 128
+ #define QMODEM_VOIP_SIP_TAG_SIZE 96
+ #define QMODEM_VOIP_SIP_BRANCH_SIZE 128

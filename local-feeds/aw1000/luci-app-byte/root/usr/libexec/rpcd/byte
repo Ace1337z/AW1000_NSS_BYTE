@@ -4,13 +4,13 @@
 # Everything the BYTE page can change is funnelled through here so the ACL can
 # stay narrow: the browser never gets a shell, only these verbs:
 #   status            read-only state of AdGuard Home, the DNS chain and the box
-#   setup             start the vendored agh-passwall2 installer (non-blocking)
+#   setup [opts]      start the vendored agh-passwall2 installer (non-blocking)
+#   uninstall [purge] start the installer in uninstall mode (non-blocking)
 #   action {name}     start|stop|restart|autostart_on|autostart_off
 #   log {lines}       live tail of the current/last setup run + exit status
 #
 # Contract: rpcd calls us with no argument to list methods, or with
 # "call <method>" and a JSON object on stdin, expecting a JSON object back.
-
 . /usr/share/libubox/jshn.sh
 
 AGH_INIT=/etc/init.d/adguardhome
@@ -18,21 +18,25 @@ AGH_YAML=/etc/adguardhome/adguardhome.yaml
 STAGE=/usr/libexec/luci-app-byte/agh-passwall2.sh
 LOG=/tmp/luci-app-byte-setup.log
 PIDF=/tmp/luci-app-byte-setup.pid
-EXIT_MARK='###BYTE_SETUP_EXIT:'
+# Vendor builds (upstream tarball, not the feed package) live here.
+AGH_ROOT=${AGH_ROOT:-/usr/share/AdGuardHome}
+AGH_INITD=/etc/init.d/AdGuardHome
+AGH_LINK=/usr/bin/AdGuardHome
 
 list_methods() {
 	cat <<'EOF'
 {
 	"status": { },
-	"setup": { },
+	"setup": { "dry_run": "string" },
+	"uninstall": { "purge": "string" },
 	"action": { "name": "string" },
 	"log": { "lines": "string" }
 }
 EOF
 }
 
-# agh_yaml_get <key> - read a flat top-level scalar out of AdGuardHome's YAML
-# without a YAML parser.
+# --- YAML readers: AdGuardHome's config is flat-ish, and a full YAML parser is
+# --- not available on the box, so read top-level and one level of nesting.
 agh_yaml_get() {
 	local key="$1"
 	awk -v key="$key" '
@@ -43,8 +47,6 @@ agh_yaml_get() {
 			exit
 		}' "$AGH_YAML" 2>/dev/null
 }
-
-# agh_yaml_sect <section> <key>: for nested "http:" / "dns:" blocks.
 agh_yaml_sect() {
 	local sect="$1" key="$2"
 	awk -v sect="$sect" -v key="$key" '
@@ -63,16 +65,15 @@ wan_ip() {
 		jsonfilter -e '@["ipv4-address"][0].address' 2>/dev/null
 }
 
-# AdGuard Home does not always arrive from the feed package: users also install
-# the upstream tarball by hand, and the LuCI app can self-update into its own
-# path. Probe every documented location and treat init script, YAML and package
-# metadata as proof of installation too - otherwise a perfectly working install
-# is reported as "not installed" because only /usr/bin was ever checked.
+# AdGuard Home arrives three ways on this box: the feed package
+# (/usr/bin/AdGuardHome), the upstream tarball under $AGH_ROOT, or a
+# self-update. Probe all of them plus the package metadata, or a working
+# install is reported "not installed" because only /usr/bin was ever checked.
 agh_bin() {
 	local b
-	for b in /usr/bin/AdGuardHome /usr/sbin/AdGuardHome \
-	         /usr/local/bin/AdGuardHome /opt/AdGuardHome/AdGuardHome \
-	         /usr/share/AdGuardHome/AdGuardHome; do
+	for b in "$AGH_LINK" /usr/bin/AdGuardHome /usr/sbin/AdGuardHome \
+	         /usr/local/bin/AdGuardHome "$AGH_ROOT/AdGuardHome" \
+	         /opt/AdGuardHome/AdGuardHome; do
 		[ -x "$b" ] && { printf '%s\n' "$b"; return 0; }
 	done
 	b=$(command -v AdGuardHome 2>/dev/null)
@@ -80,14 +81,22 @@ agh_bin() {
 	return 1
 }
 
+pkg_installed() {
+	command -v apk >/dev/null 2>&1 && apk info -e "$1" >/dev/null 2>&1 && return 0
+	command -v opkg >/dev/null 2>&1 &&
+		opkg list-installed 2>/dev/null | grep -q "^$1 " && return 0
+	return 1
+}
+
 agh_pkg_version() {
 	local v=""
-	if command -v opkg >/dev/null 2>&1; then
-		v=$(opkg list-installed 2>/dev/null |
-			awk '$1 == "adguardhome" { print $3; exit }')
-	elif command -v apk >/dev/null 2>&1; then
+	if command -v apk >/dev/null 2>&1; then
 		v=$(apk info -v adguardhome 2>/dev/null |
 			sed -n '1s/^adguardhome-\(.*\)-r[0-9]*$/\1/p')
+	fi
+	if [ -z "$v" ] && command -v opkg >/dev/null 2>&1; then
+		v=$(opkg list-installed 2>/dev/null |
+			awk '$1 == "adguardhome" { print $3; exit }')
 	fi
 	printf '%s' "$v"
 }
@@ -110,9 +119,22 @@ agh_version() {
 agh_installed() {
 	[ -n "$(agh_bin)" ] && return 0
 	[ -x "$AGH_INIT" ] && return 0
+	[ -x "$AGH_INITD" ] && return 0
 	[ -f "$AGH_YAML" ] && return 0
 	[ -n "$(agh_pkg_version)" ] && return 0
 	return 1
+}
+
+# 1 = the feed package's own init script, 2 = the vendor/procd service.
+# The action verb needs to know which one to talk to.
+agh_service_kind() {
+	if [ -x "$AGH_INIT" ]; then
+		printf 'feed'
+	elif [ -x "$AGH_INITD" ]; then
+		printf 'vendor'
+	else
+		printf 'none'
+	fi
 }
 
 # The feed package hard-codes /etc/adguardhome/adguardhome.yaml, but the UCI
@@ -122,6 +144,22 @@ agh_yaml_path() {
 	p=$(uci -q get adguardhome.config.config_file 2>/dev/null)
 	[ -n "$p" ] && [ -f "$p" ] && { printf '%s\n' "$p"; return 0; }
 	printf '%s\n' "$AGH_YAML"
+}
+
+# PassWall2: node count from its own config plus whether the service is up.
+pw_nodes() {
+	local n=0
+	[ -f /etc/config/passwall2 ] || { printf '0'; return; }
+	n=$(awk '/^[[:space:]]*config nodes/ { c++ } END { print c+0 }' \
+		/etc/config/passwall2 2>/dev/null)
+	printf '%s' "${n:-0}"
+}
+pw_running() {
+	pidof -o %PPID Xray >/dev/null 2>&1 && return 0
+	pidof Xray >/dev/null 2>&1 && return 0
+	pidof v2ray >/dev/null 2>&1 && return 0
+	[ -s /var/run/passwall2.pid ] && return 0
+	return 1
 }
 
 # The installer is started detached (setsid) with its own stdout/stderr on the
@@ -145,23 +183,26 @@ setup_exit() {
 do_status() {
 	local running=0 installed=0 enabled=0 ver="" up load memtot memavail memused
 	local dport= prefer= rdr= rp= aghweb= aghdns= feed= wan= wanup=0 ver_s=0
-
+	local svckind pwn pwr=0 stage_ver
 	# Resolve the live YAML (UCI may point outside /etc/adguardhome) before
 	# anything parses it, and use the multi-signal probe for "installed".
 	AGH_YAML=$(agh_yaml_path)
 	agh_installed && installed=1
 	ver=$(agh_version)
+	svckind=$(agh_service_kind)
 	pidof AdGuardHome >/dev/null 2>&1 && running=1
-	[ -x "$AGH_INIT" ] && "$AGH_INIT" enabled >/dev/null 2>&1 && enabled=1
+	if [ "$svckind" = feed ]; then
+		"$AGH_INIT" enabled >/dev/null 2>&1 && enabled=1
+	elif [ "$svckind" = vendor ]; then
+		[ -e /etc/rc.d/S*AdGuardHome ] && enabled=1
+	fi
 	aghweb=$(agh_yaml_sect http address)
 	aghdns=$(agh_yaml_sect dns port)
-
 	up=$(cut -d. -f1 /proc/uptime 2>/dev/null)
 	load=$(cut -d' ' -f1-3 /proc/loadavg 2>/dev/null)
 	memtot=$(awk '/^MemTotal:/ { print int($2/1024) }' /proc/meminfo 2>/dev/null)
 	memavail=$(awk '/^MemAvailable:/ { print int($2/1024) }' /proc/meminfo 2>/dev/null)
 	[ -n "$memtot" ] && [ -n "$memavail" ] && memused=$((memtot - memavail))
-
 	dport=$(uci -q get dhcp.@dnsmasq[0].port)
 	prefer=$(uci -q get network.@globals[0].packet_steering)
 	rdr=$(uci -q get passwall2.@global[0].dns_redirect)
@@ -169,7 +210,11 @@ do_status() {
 	feed=$(grep -c 'byte_by_ace' /etc/opkg/distfeeds.conf 2>/dev/null)
 	wan=$(wan_ip)
 	[ -n "$wan" ] && wanup=1
-
+	pw_running && pwr=1
+	pwn=$(pw_nodes)
+	# Version of the vendored installer: the panel shows it so a stale copy is
+	# visible instead of silently installing last year's behaviour.
+	stage_ver=$(sed -n 's/^# VENDORED_PIN=\([0-9a-f]*\).*$/\1/p' "$STAGE" 2>/dev/null | head -n 1)
 	# /etc/byte-version only exists on images that stamp it; fall back to the
 	# release description so the panel never shows an empty firmware line.
 	if [ -r /etc/byte-version ]; then
@@ -177,7 +222,6 @@ do_status() {
 	else
 		ver_s=$(. /etc/openwrt_release 2>/dev/null; printf '%s' "$DISTRIB_DESCRIPTION")
 	fi
-
 	json_init
 	json_add_object "system"
 	json_add_string "version" "$ver_s"
@@ -192,33 +236,36 @@ do_status() {
 	json_add_string "wan_ip" "${wan:-}"
 	json_add_int "repo_feeds" "${feed:-0}"
 	json_close_object
-
 	json_add_object "agh"
 	json_add_int "installed" "$installed"
 	json_add_int "running" "$running"
 	json_add_int "enabled" "$enabled"
 	json_add_string "version" "${ver:-}"
+	json_add_string "service" "$svckind"
 	json_add_string "web" "${aghweb:-}"
 	json_add_string "dns_port" "${aghdns:-}"
 	json_close_object
-
 	json_add_object "dns"
 	json_add_string "dnsmasq_port" "${dport:-53}"
 	json_add_string "passwall_redirect" "${rdr:-}"
 	json_add_string "passwall_remote_dns" "${rp:-}"
 	json_add_string "steering" "${prefer:-0}"
 	json_close_object
-
+	json_add_object "passwall"
+	json_add_int "running" "$pwr"
+	json_add_int "nodes" "${pwn:-0}"
+	json_close_object
+	json_add_string "installer_pin" "${stage_ver:-}"
 	json_add_boolean "setup_available" "$([ -x "$STAGE" ] && echo 1 || echo 0)"
 	json_add_boolean "setup_running" "$(setup_running && echo 1 || echo 0)"
 	json_add_boolean "log_available" "$([ -s "$LOG" ] && echo 1 || echo 0)"
 	json_dump
 }
 
-# Start the installer in the background. Returns immediately; the page then
-# polls "log" to stream the output into a terminal view.
-do_setup() {
-	local rc
+# Shared by do_setup/do_uninstall: start the installer detached with the given
+# arguments and hand back immediately.
+start_stage() {
+	local args="$1" rc
 	json_init
 	if setup_running; then
 		json_add_boolean "ok" 0
@@ -232,14 +279,14 @@ do_setup() {
 		json_dump
 		return
 	fi
-
 	: >"$LOG"
 	printf '###BYTE_SETUP_MARK ###\n' >>"$LOG"
+	# shellcheck disable=SC2086
 	if command -v setsid >/dev/null 2>&1; then
-		setsid sh -c '"$0" >>"$1" 2>&1; echo "###BYTE_SETUP_EXIT:$?" >>"$1"' \
+		setsid sh -c '"$0" '"$args"' >>"$1" 2>&1; echo "###BYTE_SETUP_EXIT:$?" >>"$1"' \
 			"$STAGE" "$LOG" </dev/null >/dev/null 2>&1 &
 	else
-		sh -c '"$0" >>"$1" 2>&1; echo "###BYTE_SETUP_EXIT:$?" >>"$1"' \
+		sh -c '"$0" '"$args"' >>"$1" 2>&1; echo "###BYTE_SETUP_EXIT:$?" >>"$1"' \
 			"$STAGE" "$LOG" </dev/null >/dev/null 2>&1 &
 	fi
 	rc=$!
@@ -250,41 +297,61 @@ do_setup() {
 	json_dump
 }
 
+# Start the installer in the background. Returns immediately; the page then
+# polls "log" to stream the output into a terminal view. dry_run=1 adds
+# --dry-run so the run reports what it would change and changes nothing.
+do_setup() {
+	local dry=0
+	json_load "$(cat)"
+	json_get_var dry dry_run
+	case "$dry" in
+	1 | true | yes | on) dry=1 ;;
+	*) dry=0 ;;
+	esac
+	[ "$dry" = 1 ] && start_stage "--dry-run" || start_stage ""
+}
+
+do_uninstall() {
+	local purge=0
+	json_load "$(cat)"
+	json_get_var purge purge
+	case "$purge" in
+	1 | true | yes | on) start_stage "--uninstall --purge --yes" ;;
+	*) start_stage "--uninstall --yes" ;;
+	esac
+}
+
 do_action() {
 	local name out rc=0
 	json_load "$(cat)"
 	json_get_var name name
-	if [ ! -x "$AGH_INIT" ]; then
+	if [ ! -x "$AGH_INIT" ] && [ ! -x "$AGH_INITD" ]; then
 		json_init
 		json_add_boolean "ok" 0
 		if agh_installed; then
-			json_add_string "message" "AdGuard Home has no init script ($AGH_INIT) - re-run \"Install and wire\""
+			json_add_string "message" \
+				"AdGuard Home is installed but has no init script; check the install log"
 		else
-			json_add_string "message" "AdGuard Home is not installed yet - run \"Install and wire\" first"
+			json_add_string "message" "AdGuard Home is not installed"
 		fi
 		json_dump
 		return
 	fi
+	# Prefer the feed init script; fall back to the vendor procd service.
+	local init="$AGH_INIT"
+	[ -x "$init" ] || init="$AGH_INITD"
 	case "$name" in
-	start)
-		out=$("$AGH_INIT" start 2>&1)
-		rc=$?
-		;;
-	stop)
-		out=$("$AGH_INIT" stop 2>&1)
-		rc=$?
-		;;
-	restart)
-		out=$("$AGH_INIT" restart 2>&1)
-		rc=$?
-		;;
+	start) out=$("$init" start 2>&1); rc=$? ;;
+	stop) out=$("$init" stop 2>&1); rc=$? ;;
+	restart) out=$("$init" restart 2>&1); rc=$? ;;
 	autostart_on)
-		out=$("$AGH_INIT" enable 2>&1)
-		rc=$?
+		out=$("$init" enable 2>&1); rc=$?
+		[ "$rc" != 0 ] && { ln -sf ../init.d/$(basename "$init") \
+			/etc/rc.d/S99AdGuardHome 2>/dev/null; rc=0; out="enabled via rc.d link"; }
 		;;
 	autostart_off)
-		out=$("$AGH_INIT" disable 2>&1)
-		rc=$?
+		out=$("$init" disable 2>&1); rc=$?
+		[ "$rc" != 0 ] && { rm -f /etc/rc.d/S*AdGuardHome 2>/dev/null; rc=0; out="disabled via rc.d link"; }
 		;;
 	*)
 		rc=1
@@ -324,6 +391,7 @@ call)
 	case "$1" in
 	status) do_status ;;
 	setup) do_setup ;;
+	uninstall) do_uninstall ;;
 	action) do_action ;;
 	log) do_log ;;
 	*)

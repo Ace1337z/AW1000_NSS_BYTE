@@ -1,0 +1,116 @@
+diff --git a/application/qmodem_sipd/src/sip_consumer.c b/application/qmodem_sipd/src/sip_consumer.c
+index ba8ac6e..f21dff0 100644
+--- a/application/qmodem_sipd/src/sip_consumer.c
++++ b/application/qmodem_sipd/src/sip_consumer.c
+@@ -369,8 +369,9 @@ static pjsip_authorization_hdr *authorization(pjsip_rx_data *request)
+ 		request->msg_info.msg, PJSIP_H_AUTHORIZATION, NULL);
+ }
+ 
+-static int nonce_check(pjsip_rx_data *request, pjsip_authorization_hdr *header,
+-		       unsigned long *nc, struct qmodem_voip_sip_nonce **accepted)
++static enum qmodem_voip_sip_nonce_result nonce_check(
++	pjsip_rx_data *request, pjsip_authorization_hdr *header,
++	unsigned long *nc, struct qmodem_voip_sip_nonce **accepted)
+ {
+ 	pj_time_val now;
+ 	char nc_text[9];
+@@ -379,7 +380,7 @@ static int nonce_check(pjsip_rx_data *request, pjsip_authorization_hdr *header,
+ 	if (!header || !str_equal(&header->credential.digest.qop, "auth") ||
+ 	    header->credential.digest.nonce.slen != 32 ||
+ 	    header->credential.digest.nc.slen != 8)
+-		return 0;
++		return QMODEM_VOIP_SIP_NONCE_UNKNOWN;
+ 	memcpy(nonce, header->credential.digest.nonce.ptr, 32);
+ 	nonce[32] = '\0';
+ 	pj_gettimeofday(&now);
+@@ -387,10 +388,10 @@ static int nonce_check(pjsip_rx_data *request, pjsip_authorization_hdr *header,
+ 	nc_text[8] = '\0';
+ 	errno = 0;
+ 	*nc = strtoul(nc_text, &end, 16);
+-	return errno == 0 && *end == '\0' &&
+-		qmodem_voip_sip_nonce_check(&app.nonces, source_address(request),
+-			nonce, (uint64_t)now.sec, *nc, accepted) ==
+-		QMODEM_VOIP_SIP_NONCE_OK;
++	if (errno != 0 || *end != '\0')
++		return QMODEM_VOIP_SIP_NONCE_UNKNOWN;
++	return qmodem_voip_sip_nonce_check(&app.nonces, source_address(request),
++		nonce, (uint64_t)now.sec, *nc, accepted);
+ }
+ 
+ static int authenticate(pjsip_rx_data *request)
+@@ -411,7 +412,14 @@ static int authenticate(pjsip_rx_data *request)
+ 		send_response(request, PJSIP_SC_UNAUTHORIZED, PJ_TRUE, PJ_FALSE);
+ 		return 0;
+ 	}
+-	if (!nonce_check(request, header, &nc, &accepted)) {
++	switch (nonce_check(request, header, &nc, &accepted)) {
++	case QMODEM_VOIP_SIP_NONCE_OK:
++		break;
++	case QMODEM_VOIP_SIP_NONCE_EXPIRED:
++		/* Nonce was issued by us and was valid until a moment ago: tell
++		 * the client it can retry with its cached credentials (stale),
++		 * avoiding the credential prompt. This is the only case where
++		 * stale=true is correct. */
+ 		if (!rate_allow(app.auth_rates, request, 10)) {
+ 			send_response(request, PJSIP_SC_FORBIDDEN, PJ_FALSE, PJ_FALSE);
+ 			return 0;
+@@ -422,6 +430,20 @@ static int authenticate(pjsip_rx_data *request)
+ 		}
+ 		send_response(request, PJSIP_SC_UNAUTHORIZED, PJ_TRUE, PJ_TRUE);
+ 		return 0;
++	default:
++		/* Unknown or replayed nonce: a fresh challenge without stale,
++		 * so clients that do not cache credentials re-authenticate
++		 * with the account password. */
++		if (!rate_allow(app.auth_rates, request, 10)) {
++			send_response(request, PJSIP_SC_FORBIDDEN, PJ_FALSE, PJ_FALSE);
++			return 0;
++		}
++		if (new_nonce(request) != 0) {
++			send_response(request, PJSIP_SC_SERVICE_UNAVAILABLE, PJ_FALSE, PJ_FALSE);
++			return 0;
++		}
++		send_response(request, PJSIP_SC_UNAUTHORIZED, PJ_TRUE, PJ_FALSE);
++		return 0;
+ 	}
+ 	if (pjsip_auth_srv_verify(&app.auth, request, &status) != PJ_SUCCESS) {
+ 		if (!rate_allow(app.auth_rates, request, 10)) {
+@@ -496,6 +518,13 @@ static void register_contact(pjsip_rx_data *request)
+ 					&response) != PJ_SUCCESS)
+ 		return;
+ 	(void)snprintf(expiry, sizeof(expiry), "%u", app.expires);
++	/* RFC 3261 10.3: a 2xx to REGISTER must echo the registered contact
++	 * bindings and Expires so UACs (Sipnetic, Android softphones) can show
++	 * the account as registered and refresh on time. The vendor headers are
++	 * kept for our own tooling. */
++	add_string_header(response, "Contact",
++			  app.binding[0] ? app.binding : "<sip:none@invalid>");
++	add_string_header(response, "Expires", expiry);
+ 	add_string_header(response, "X-QModem-Expires", expiry);
+ 	add_string_header(response, "X-QModem-Binding",
+ 			  app.binding[0] ? app.binding : "none");
+diff --git a/application/qmodem_sipd/tests/service-contract.sh b/application/qmodem_sipd/tests/service-contract.sh
+index a742d29..3a45508 100755
+--- a/application/qmodem_sipd/tests/service-contract.sh
++++ b/application/qmodem_sipd/tests/service-contract.sh
+@@ -28,6 +28,20 @@ grep -q 'schedule_outbound_register_retry' "$ROOT/src/sip_consumer.c"
+ grep -q '"registration_attempts"' "$ROOT/src/sip_consumer.c"
+ grep -q '"retry_scheduled"' "$ROOT/src/sip_consumer.c"
+ 
++# RFC 3261 10.3: a 2xx to REGISTER must echo Contact bindings + Expires.
++grep -q 'add_string_header(response, "Contact"' "$ROOT/src/sip_consumer.c"
++grep -q 'add_string_header(response, "Expires", expiry)' "$ROOT/src/sip_consumer.c"
++grep -q 'add_string_header(response, "X-QModem-Expires", expiry)' \
++	"$ROOT/src/sip_consumer.c"
++
++# Nonce lifetime must cover client refresh intervals; stale=true only on
++# genuine expiry (not on every refresh).
++grep -q 'QMODEM_VOIP_SIP_NONCE_LIFETIME 3600' \
++	"$ROOT/src/sip_gateway.h"
++grep -q 'QMODEM_VOIP_SIP_NONCE_LIFETIME' "$ROOT/src/sip_gateway.c"
++grep -q 'case QMODEM_VOIP_SIP_NONCE_EXPIRED:' "$ROOT/src/sip_consumer.c"
++grep -q 'case QMODEM_VOIP_SIP_NONCE_OK:' "$ROOT/src/sip_consumer.c"
++
+ grep -q 'UBUS_METHOD("send_managed"' "$SMSD/src/main.c"
+ grep -q 'managed send requires database mode' "$SMSD/src/main.c"
+ grep -q 'managed_sends' "$SMSD/src/sms_db.c"

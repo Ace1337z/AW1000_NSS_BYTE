@@ -100,8 +100,8 @@ OpenWrt ppe-nss (NSS offload) for the Arcadyan AW1000, built from this tree.
   installed as a fallback.
 - Dashboard: mobile, thermal and storage cards; the NSS card is replaced by
   Storage; the bottom detail tabs and the layout editor are hidden.
-- BYTE panel under **Services**: AdGuard Home setup/status, DNS chain, system
-  state.
+- BYTE panel under **Tools**: AdGuard Home setup/status (with dry-run and
+  undo/uninstall), DNS chain, system state; PassWall2 nodes live under Services.
 - PassWall v1 (4.66-8) and PassWall2 (Xray only, VLESS) - no geodata packages;
   install \`v2ray-geoip\`/\`v2ray-geosite\`/geoview only if geo rules are wanted.
 - OpenClash and Nikki dependencies only (bash, ruby, yq, kmod-inet-diag,

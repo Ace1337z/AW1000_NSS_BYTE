@@ -212,7 +212,7 @@ CONFIG_ATH11K_NSS_WIFI=y
 CONFIG_PACKAGE_kmod-rmnet-nss=n
 CONFIG_PACKAGE_kmod-qmi_wwan_q_nss=n
 CONFIG_PACKAGE_kmod-pcie_mhi_nss=n
-# --- BYTE panel (Ace1337z/AW1000_BYTE, packages/luci-app-byte @ c3afe91) ---
+# --- BYTE panel (vendored from Ace1337z/luci-app-byte, standalone repo) ---
 ## One page for AdGuard Home setup/status, the DNS chain and system state.
 ## Local vendor patches the upstream menu from admin/tools to admin/services.
 CONFIG_PACKAGE_luci-app-byte=y

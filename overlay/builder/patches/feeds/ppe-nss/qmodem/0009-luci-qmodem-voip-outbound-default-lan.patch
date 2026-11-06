@@ -1,0 +1,13 @@
+diff --git a/luci/luci-app-qmodem-voip/htdocs/luci-static/resources/view/qmodem-voip/sip.js b/luci/luci-app-qmodem-voip/htdocs/luci-static/resources/view/qmodem-voip/sip.js
+index 678351f..1d9dda8 100644
+--- a/luci/luci-app-qmodem-voip/htdocs/luci-static/resources/view/qmodem-voip/sip.js
++++ b/luci/luci-app-qmodem-voip/htdocs/luci-static/resources/view/qmodem-voip/sip.js
+@@ -163,7 +163,7 @@ return view.extend({
+ 			_('Outbound SIP'), _('Register with an external SIP server over TLS.'));
+ 		outbound.anonymous = true;
+ 		outbound.addremove = false;
+-		this.addCommonOptions(outbound, 'wan', interfaces, modems);
++		this.addCommonOptions(outbound, 'lan', interfaces, modems);
+ 		option = outbound.option(form.Value, 'server', _('SIP server'));
+ 		option.datatype = 'host';
+ 		option.rmempty = false;

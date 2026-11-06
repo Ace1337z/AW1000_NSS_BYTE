@@ -1,13 +1,13 @@
 {
-	"admin/services": {
-		"title": "Services",
-		"order": 40,
+	"admin/tools": {
+		"title": "Tools",
+		"order": 50,
 		"action": {
 			"type": "firstchild",
 			"recurse": true
 		}
 	},
-	"admin/services/byte": {
+	"admin/tools/byte": {
 		"title": "BYTE (AdGuard Home + PassWall2)",
 		"order": 10,
 		"action": {

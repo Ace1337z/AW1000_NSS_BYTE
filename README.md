@@ -70,7 +70,7 @@ recoverable over serial/TFTP, not over the network alone.
 | Phone/SIP extension | user `byte`, random password in `/root/SIP-CREDENTIALS.txt` (mode 0600) |
 
 Firewall: WAN-side input is dropped as in stock OpenWrt, so LuCI/SSH are
-reachable from LAN only. The BYTE panel is under **Services → BYTE**.
+reachable from LAN only. The BYTE panel is under **Tools → BYTE**.
 
 > **Security warning.** The WLAN is open (no passphrase) and the root account
 > has an empty password, both by design for first boot. Anyone in radio range
@@ -99,3 +99,23 @@ missing or the release carries no sysupgrade asset.
   firmware. It is stored base64 (`si3226x_patch.bin.b64`) so the repository stays
   text-only; `prepare.sh` decodes it. It is third-party vendor code and this
   repository redistributes it — check whether that is acceptable for your use.
+
+## Inbound SIP (qmodem_sipd) release notes
+
+Inbound SIP ships **enabled by default** on the LAN (UDP/TCP 5060, RTP
+UDP 40000–40031) with **fixed, universal credentials** on every device:
+
+- username `qmodem`, password `QModem!VOIP-2026-x9Kt7Wp4`
+- the same QR registers any Sipnetic/Android softphone on any router on the
+  same LAN:
+  `n=Router;d=192.168.1.1;u=qmodem;p=QModem!VOIP-2026-x9Kt7Wp4;au=qmodem;dt=1;exp=300`
+- the plaintext password lives only in `/etc/config/qmodem_sip` (mode 0600);
+  the daemon state file `/var/run/qmodem_voip/sip.conf` carries only
+  `username=` + `ha1=` (MD5 of `user:realm:password`, realm `qmodem-voip`)
+- the `generate_credentials` ubus call is never run automatically; it only
+  exists as a manual admin action in the SIP page.
+
+**Security warning:** because the credential is universal, anyone who has the
+QR can register to **any** of these routers on the same LAN. Inbound SIP is
+LAN-only by default — do **not** expose UDP/TCP 5060 or UDP 40000–40031 to the
+WAN/wwan0.

@@ -13,7 +13,7 @@
 		},
 		"write": {
 			"ubus": {
-				"byte": [ "setup", "action" ]
+				"byte": [ "setup", "action", "uninstall" ]
 			}
 		}
 	}
