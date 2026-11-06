@@ -1,0 +1,73 @@
+#!/bin/sh /etc/rc.common
+# AW1000: recover radios that missed their first bring-up attempts.
+#
+# On a cold/first boot, ath11k probes before nss-wifi has finished loading the
+# NSS firmware (S19nss-wifi), and the mac80211 hotplug that would start the
+# configured APs can be lost in the race. The box then boots with no SSID and
+# only a power cycle brings the radios back. This service does one, bounded
+# recovery pass: if the radios are up but the AP interfaces are not, it re-runs
+# `wifi reload` to replay the config-driven bring-up. It never loops and never
+# touches hardware state; if the phy itself never appeared, it records the
+# kernel radio errors and leaves the box alone.
+#
+# START=26: after network (20) and nss-wifi (19), before user services.
+START=26
+
+RADIO_MAX_WAIT=45
+AP_MAX_WAIT=30
+LOG=/tmp/log/aw1000-wifi-ensure.log
+
+radios_up() {
+	[ -d /sys/class/ieee80211/phy0 ] && [ -d /sys/class/ieee80211/phy1 ]
+}
+
+aps_up() {
+	[ -d /sys/class/net/phy0-ap0 ] && [ -d /sys/class/net/phy1-ap0 ]
+}
+
+start() {
+	mkdir -p /tmp/log
+
+	# Wait for both radios to appear (firmware load happens in the kernel;
+	# on a slow first boot this can exceed the usual probe window).
+	i=0
+	while ! radios_up && [ "$i" -lt "$RADIO_MAX_WAIT" ]; do
+		sleep 3
+		i=$((i + 3))
+	done
+
+	if ! radios_up; then
+		logger -t aw1000-wifi-ensure \
+			"radios missing after ${RADIO_MAX_WAIT}s; wifi reload cannot help"
+		dmesg | grep -iE "ath11k|nss-wifi" | tail -40 > "$LOG" 2>/dev/null
+		exit 0
+	fi
+
+	# Radios exist but the configured APs are not up: replay the config.
+	if ! aps_up; then
+		[ -f /etc/config/wireless ] || exit 0
+		logger -t aw1000-wifi-ensure "APs down, running wifi reload once"
+		wifi reload >/dev/null 2>&1
+
+		i=0
+		while ! aps_up && [ "$i" -lt "$AP_MAX_WAIT" ]; do
+			sleep 3
+			i=$((i + 3))
+		done
+
+		if aps_up; then
+			logger -t aw1000-wifi-ensure "APs up after wifi reload"
+		else
+			logger -t aw1000-wifi-ensure \
+				"APs still down after wifi reload; inspect $LOG"
+			dmesg | grep -iE "ath11k|nss-wifi|hostapd" | tail -60 > "$LOG" \
+				2>/dev/null
+		fi
+	fi
+
+	exit 0
+}
+
+stop() {
+	:
+}

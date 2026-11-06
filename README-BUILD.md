@@ -193,26 +193,29 @@ missing TLS listener:
   the cert's only SAN is `DNS:OpenWrt` — no IP, and the box is reached as
   `https://192.168.1.1`, which can never match. The same cert is also
   self-signed, so a client has no reason to trust it.
-- Fix shipped here: `etc/uci-defaults/50-aw1000-tls` mints an EC P-256
-  self-signed cert with `DNS:BYTE`, `DNS:BYTE.lan` and `IP:<every address on
-  network.lan>`, mode 600 key, and sets `uhttpd.defaults.commonname=BYTE` so a
-  stock regeneration keeps the name. It runs before uhttpd starts
-  (`uci-defaults` via `init.d/boot` START=10, uhttpd START=50), regenerates only
-  when the SAN set changes (LAN address edited), a file is missing, or the cert
-  is under 7 days from expiry — a new cert every boot would invalidate the
-  browser exception each boot. Marker: `system.@system[0].aw1000_tls_san`.
-- Result: address mismatch gone; the browser still warns once because the cert
-  is self-signed. Two ways to make it silent:
-  1. **Trust the cert once per client** — download `/etc/uhttpd.crt` (LuCI:
-     System → Administration, or `scp root@192.168.1.1:/etc/uhttpd.crt .`) and
-     import it as a trusted authority. The cert rotates when the LAN address
-     changes or after 397 days, so the import has to be repeated then.
-  2. **Local CA + leaf** (not shipped) — generate a device CA once, sign the
-     leaf with it, publish the CA at `/ca.crt` for one-time install. Gives a
-     green lock with no per-cert renewal prompt, but any client that trusts
-     that CA also trusts anything signed by the router's CA key, so the key on
-     `/etc` (overlay, survives sysupgrade) is a real exposure if the box is
-     compromised.
+- Fix shipped here: `etc/uci-defaults/50-aw1000-tls` generates a local **BYTE
+  CA** once (`/etc/uhttpd-ca.crt`/`.key`), then mints EC P-256 server certs
+  signed by it with `DNS:BYTE`, `DNS:BYTE.lan` and `IP:<every address on
+  network.lan>`, mode 600 key, and sets `uhttpd.defaults.commonname=BYTE` and
+  `uhttpd.main.cert`/`.key` so a stock regeneration keeps the name. The CA is
+  served at `https://192.168.1.1/luci-static/ca.crt` for one-time import. It
+  runs before uhttpd starts (`uci-defaults` via `init.d/boot` START=10, uhttpd
+  START=50); the CA regenerates only when missing/expired, and the server cert
+  only when the SAN set changes (LAN address edited), a file is missing, the
+  cert is under 7 days from expiry, or the issuer CA changed — a new cert every
+  boot would invalidate the browser exception each boot. Markers:
+  `system.@system[0].aw1000_tls_san` and `.aw1000_tls_ca` (CA fingerprint).
+- Result: address mismatch gone; the browser still warns once because the CA is
+  not yet trusted. Two ways to make it silent:
+  1. **Trust the BYTE CA once per client** — open
+     `https://192.168.1.1/luci-static/ca.crt` (or
+     `scp root@192.168.1.1:/etc/uhttpd-ca.crt .`) and import it as a trusted
+     root. The CA is valid 10 years, so the import is effectively permanent;
+     the server cert rotates on LAN address changes but stays signed by the
+     same CA, so no warning returns. Keep the router's CA key (`/etc` overlay)
+     guarded — anyone with it can mint certs for this device.
+  2. Use a public ACME cert, which needs a public hostname and port 80/443
+     reachable from the internet — wrong for a LAN-only box.
 - A publicly trusted certificate is impossible for a bare RFC1918 address like
   `192.168.1.1`. The only warning-free alternative without installing anything
   on the client is a real domain with DNS-01 issuance (public DNS name pointing

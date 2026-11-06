@@ -116,12 +116,24 @@ OpenWrt ppe-nss (NSS offload) for the Arcadyan AW1000, built from this tree.
   hotplug re-pin). QModem no longer leaves \`network.<if>\`/\`<if>v6\` deleted
   after a hang: the dial path recreates them.
 - RJ11 phone: the Skyworks Si32261 DSP patch ships in \`/etc/fxs\`; fxsd checks
-  PCM and forces the modem to slave. LAN SIP (QModem voice/SIM) is enabled with
-  generated credentials in \`/root/SIP-CREDENTIALS.txt\`. Dial tone, ringing,
-  DTMF, caller ID, hold, speed dial, blocked numbers, call history available.
+  PCM and forces the modem to slave. LAN SIP (QModem voice/SIM) is enabled by
+  default with fixed universal credentials (to \`qmodem\` / \`QModem!VOIP-
+  2026-x9Kt7Wp4\`, UCI \`/etc/config/qmodem_sip\` mode 0600, QR in release
+  notes). The experimental call service and its HTTPS/WebSocket media access
+  are enabled by default too (UCI \`qmodem_voip.main.enabled\` /
+  \`web_enabled\` = 1). Dial tone, ringing, DTMF, caller ID, hold, speed dial,
+  blocked numbers, call history available.
 - IPv6 detected at boot: \`wan6\` DHCPv6 + \`ip6assign\` on LAN; while no usable
   v6 exists, dnsmasq \`filter_AAAA\` keeps clients on IPv4.
-- vnstat database in \`/etc/vnstat\`; its LuCI menu node is hidden.
+- vnstat database in \`/etc/vnstat\` (SQLite, one \`vnstat.db\`); its LuCI
+  menu node is hidden, and the NetStat graph now lists the real interfaces
+  instead of \`vnstat.db\`.
+- First-boot Wi-Fi: the radios miss their initial bring-up race on some cold
+  boots; \`/etc/init.d/aw1000-wifi-ensure\` replays \`wifi reload\` once and
+  logs to \`/tmp/log/aw1000-wifi-ensure.log\` when the APs do not appear.
+- HTTPS: the LuCI certificate is now signed by a local BYTE CA; import
+  \`https://192.168.1.1/luci-static/ca.crt\` once per client for a warning-free
+  UI (details in README-BUILD.md).
 
 ## Install
 

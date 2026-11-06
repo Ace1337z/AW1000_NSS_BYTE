@@ -1,0 +1,12 @@
+diff --git a/application/voipd/files/etc/config/qmodem_voip b/application/voipd/files/etc/config/qmodem_voip
+index 4534c6c..ace6c77 100644
+--- a/application/voipd/files/etc/config/qmodem_voip
++++ b/application/voipd/files/etc/config/qmodem_voip
+@@ -1,5 +1,5 @@
+ config main 'main'
+-	option enabled '0'
+-	option web_enabled '0'
++	option enabled '1'
++	option web_enabled '1'
+ 	option interface 'lan'
+ 	option media_socket_path '/var/run/qmodem_voip/media.sock'
