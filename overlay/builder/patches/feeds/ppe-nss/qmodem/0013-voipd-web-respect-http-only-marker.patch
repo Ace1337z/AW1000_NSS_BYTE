@@ -1,0 +1,15 @@
+diff --git a/application/voipd/files/usr/sbin/qmodem_voip_web b/application/voipd/files/usr/sbin/qmodem_voip_web
+index 4021ee8..2e98061 100755
+--- a/application/voipd/files/usr/sbin/qmodem_voip_web
++++ b/application/voipd/files/usr/sbin/qmodem_voip_web
+@@ -5,6 +5,10 @@ enabled=$(uci -q get qmodem_voip.main.web_enabled 2>/dev/null || printf '0')
+ changed=0
+ case "$enabled" in
+ 	1)
++		# Local: respect the HTTP-only UI marker - never force HTTPS back on.
++		if [ "$(uci -q get uhttpd.main.aw1000_http_only 2>/dev/null || printf 0)" = 1 ]; then
++			exit 0
++		fi
+ 		for listener in '0.0.0.0:443' '[::]:443'; do
+ 			listeners=$(uci -q get uhttpd.main.listen_https 2>/dev/null || :)
+ 			case " $listeners " in

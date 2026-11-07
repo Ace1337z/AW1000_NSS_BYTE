@@ -17,6 +17,10 @@
 
 # Drop every HTTPS listener and the redirect.
 uci -q delete uhttpd.main.listen_https 2>/dev/null
+# QModem's voice web helper force-enables HTTPS for WebRTC media capture;
+# that defeats this default and is what puts the cert warning back. Drop
+# its flag too; the (patched) helper now also respects the marker below.
+uci -q delete uhttpd.main.qmodem_voip_https 2>/dev/null
 uci -q set uhttpd.main.redirect_https='0'
 # Keep only the port-80 listeners.
 uci -q set uhttpd.main.listen_http='0.0.0.0:80'
