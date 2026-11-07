@@ -43,13 +43,23 @@ if [ "$SMOKE" != 0 ]; then
     # The vendor modem modules are the risky part: they are out-of-tree, only
     # built for NSS targets, and upstream CI never compiles them, so a kernel
     # API change or a missing EXPORT_SYMBOL() shows up as a modpost error after
-    # hours. Build all three up front.
-    echo "== smoke: tools, toolchain, kernel, then the vendor modem modules (V=sc) =="
+    # hours. Build all three up front, together with every qmodem package that
+    # a local feed patch touches: a stale patch may apply with GNU patch fuzz
+    # and produce compilable-but-different C (e.g. the duplicate struct member
+    # that once failed 3 h into the world build), so the patched C needs to be
+    # compiled in the fast phase where a break costs minutes, not hours.
+    echo "== smoke: tools, toolchain, kernel, vendor modem modules, patched qmodem apps (V=sc) =="
     for goal in tools/install toolchain/install target/compile \
                 package/feeds/qmodem/quectel_MHI/compile \
                 package/feeds/qmodem/quectel_QMI_WWAN/compile \
                 package/feeds/qmodem/simcom_QMI_WWAN/compile \
-                package/feeds/aw1000/aw1000-fxs/compile; do
+                package/feeds/aw1000/aw1000-fxs/compile \
+                package/feeds/qmodem/voipd/compile \
+                package/feeds/qmodem/qmodem_sipd/compile \
+                package/feeds/qmodem/qmodem/compile \
+                package/feeds/qmodem/qmodem_uplink_manager/compile \
+                package/feeds/qmodem/luci-app-qmodem-voip/compile \
+                package/feeds/qmodem/luci-app-qmodem-ttlfw4/compile; do
         echo "-- smoke: $goal"
         set +e
         make -j"$JOBS" V=sc "$goal" 2>&1 | tee -a "$LOG"

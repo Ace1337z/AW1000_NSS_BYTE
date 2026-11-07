@@ -14,7 +14,8 @@ AW1000_NSS_BYTE/
 │   ├── devices/.../files.ppe-nss/           local overlay (this tree)
 │   ├── patches/feeds/ppe-nss/               feed patches (TTL, xray pin, sqm,
 │   │                                        dashboard tabs, qmodem offload,
-│   │                                        modem MTU, uplink recreate)
+│   │                                        modem MTU, uplink keep-offload,
+│   │                                        uplink recreate)
 │   ├── patches/local-feeds/aw1000/          src-link feed patches (git apply
 │   │                                        against the pinned src checkouts:
 │   │                                        passwall v1 apk version,
@@ -376,13 +377,26 @@ cd /home/ace/AW1000_NSS_BYTE
 ./build.sh            # the only step that compiles; JOBS=2 default
 ```
 `ci/preflight.sh` is the cheap gate: it checks that every fragment symbol
-survived into `.config`, that each builder patch is applied cleanly to the
-pinned feed, that every overlay file (and the decoded vendor blob, md5
-`3778fa32…`) reached `openwrt/files` with the right mode, and that no
-transport file (`*.b64`, `*.orig`, `*.rej`) leaked into the staged rootfs. It
-exits non-zero on any failure and runs in CI before the compile, so a broken
-definition fails in seconds instead of hours. It never compiles anything —
-`./build.sh` (or the workflow) is the only step that does.
+survived into `.config`, that each builder patch is applied **exactly** to the
+pinned feed (`patch --fuzz=0` — GNU patch's default fuzz would silently nudge
+a stale hunk into place, which is how a patch once applied "cleanly" and then
+placed a duplicate C struct member that failed 3 h later), that every overlay
+file (and the decoded vendor blob, md5 `3778fa32…`) reached `openwrt/files`
+with the right mode, and that no transport file (`*.b64`, `*.orig`,
+`*.rej`) leaked into the staged rootfs. It exits non-zero on any failure and
+runs in CI before the compile, so a broken definition fails in seconds instead
+of hours. It never compiles anything — `./build.sh` (or the workflow) is the
+only step that does. `prepare.sh` applies the same strict `--fuzz=0` rule
+(`overlay/builder/scripts/prepare-build.sh`), so a stale patch fails at
+prepare time too.
+
+The tracked source of truth for builder patches is `overlay/builder/patches/`
+(or `overlay/builder/scripts/`). `builder/` is a git-ignored throw-away
+staging copy: `prepare.sh` overwrites it from `overlay/` every run. Never edit
+`builder/` directly — a patch added there is invisible to CI and to a fresh
+clone, and silently makes local builds differ from shipped ones (this exact
+split once hid two patches from CI: `qmodem/0002-uplink-keep-flow-offload`
+and `packages/0001-sqm-scripts-pin-the-fork-that-carries-hw_ppe`).
 
 The last gate is `ci/check-packages.py`, which evaluates the two things apk
 rejects at the very end of the image build (after every package has compiled,
@@ -421,12 +435,17 @@ diagnostic is discarded - which is exactly how a 4 h CI run failed without
 telling us why. `build.sh` therefore runs `make V=s` (keeps the compiler
 output) and, when the build fails, re-runs each named builddir with
 `make V=sc <builddir>/{clean,compile}` so the real error lands in the same run.
-`SMOKE=1` (default) compiles tools, toolchain, kernel and the four
-out-of-tree kernel modules (`quectel_MHI`, `quectel_QMI_WWAN`,
-`simcom_QMI_WWAN` — none of which upstream CI builds — and `aw1000-fxs`, the
-SLIC driver) before the long `world` build: no extra cost when it passes
-(stamps are reused), an hour instead of four when a kernel module breaks.
-`SMOKE=0` skips it. CI uploads `build.log` as an artifact on failure.
+`SMOKE=1` (default) compiles tools, toolchain, kernel, the four out-of-tree
+kernel modules (`quectel_MHI`, `quectel_QMI_WWAN`, `simcom_QMI_WWAN` — none
+of which upstream CI builds — and `aw1000-fxs`, the SLIC driver) **and every
+qmodem package a local feed patch touches** (`voipd`, `qmodem_sipd`,
+`qmodem`, `qmodem_uplink_manager`, `luci-app-qmodem-voip`,
+`luci-app-qmodem-ttlfw4`) before the long `world` build. A patched C package
+is the cheapest possible compile: a stale patch that applies with fuzz and
+lands wrong (e.g. the duplicate struct member that once failed 3 h into the
+world build) now fails here, minutes after the kernel, instead of at the very
+end. No extra cost when it passes (stamps are reused); `SMOKE=0` skips it. CI
+uploads `build.log` as an artifact on failure.
 
 The builder's default `CONFIG_ALL_KMODS=y` is turned off (`aw1000.fragment`):
 with it, `world` compiles every kernel-module package in every feed (~1100
@@ -440,6 +459,15 @@ prototype change + `-march=native`). The image ships exactly the selected
 Machine: 4 threads, 5.8 GB RAM + 4 GB swap → `-j2`. LTO + mold + GCC 15 make
 `-j4` swap-thrash. `make defconfig` prints harmless recursive-dependency errors
 (qt5base-gui, fwknopd, squeezelite-custom).
+
+CI (4 vCPU / 16 GB) builds at `-j4` and keeps three caches between runs:
+`dl/` (sources), a persistent `ccache` (2 GB cap, restored/saved every run,
+`CONFIG_CCACHE=y` in the fragment), and the pin-derived build state
+(toolchain, host tools, compiled kernel tree — keyed on `ci/bootstrap.sh` +
+`prepare.sh` + `VERSION`, so a pin change rebuilds it once and the cache is
+never reused across different sources). Repeat runs with unchanged pins are
+therefore mostly cache hits and finish well inside 2 h; a cold run (first
+build after a pin change) is the full ~2.5–3 h build.
 
 Output:
 `openwrt/bin/targets/qualcommax/ipq807x/*arcadyan_aw1000*squashfs-sysupgrade.bin`

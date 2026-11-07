@@ -91,9 +91,13 @@ grep -q 'Upload build log on failure' "$ROOT/.github/workflows/build.yml" &&
 	ok "workflow keeps build.log on failure" || bad "workflow does not upload build.log on failure"
 # The vendor modem modules are the only out-of-tree kernel modules in the tree
 # and upstream CI never builds them: keep them in the fast smoke phase so a
-# kernel API/modpost break costs ~1 h instead of a full world build.
+# kernel API/modpost break costs ~1 h instead of a full world build. Also
+# every qmodem package a local feed patch touches (C sources), so a stale
+# fuzz-applied patch fails in minutes instead of after the ~3 h world build.
 for p in package/feeds/qmodem/quectel_MHI package/feeds/qmodem/quectel_QMI_WWAN \
-	package/feeds/qmodem/simcom_QMI_WWAN package/feeds/aw1000/aw1000-fxs; do
+	package/feeds/qmodem/simcom_QMI_WWAN package/feeds/aw1000/aw1000-fxs \
+	package/feeds/qmodem/voipd package/feeds/qmodem/qmodem_sipd \
+	package/feeds/qmodem/qmodem package/feeds/qmodem/qmodem_uplink_manager; do
 	grep -q "$p/compile" "$ROOT/build.sh" &&
 		ok "smoke builds $p" || bad "build.sh smoke list must include $p"
 done
@@ -119,9 +123,18 @@ ok "$pkg_n vendored/local package makefiles differ"
 
 head2 "config symbols"
 if [ -f "$CONFIG" ]; then
+	# CONFIG_CCACHE needs a host ccache binary; without one, defconfig drops
+	# the symbol. CI installs ccache and persists the cache dir between runs,
+	# so it is required there - but a local machine without ccache should only
+	# be warned, not blocked.
+	ccache_bin="$(command -v ccache 2>/dev/null || true)"
 	sym_n=0
 	while IFS= read -r sym; do
 		sym_n=$((sym_n + 1))
+		if [ "$sym" = "CONFIG_CCACHE=y" ] && [ -z "$ccache_bin" ]; then
+			warn "CONFIG_CCACHE=y requested but host ccache binary not found (symbol will be dropped by defconfig)"
+			continue
+		fi
 		grep -qx "$sym" "$CONFIG" || bad "$sym requested by fragment but not in .config"
 	done < <(grep -E '^CONFIG_[A-Za-z0-9_]+=y$' "$ROOT/builder/local/aw1000.fragment" | sort -u)
 	ok "$sym_n fragment symbols kept"
@@ -177,11 +190,18 @@ if [ -d "$PATCH_FEEDS" ]; then
 		git -C "$dir" archive HEAD | tar -xf - -C "$tmp"
 		rc=0
 		for p in "${feed_patches[@]}"; do
-			patch -p1 -d "$tmp" --forward <"$p" >/dev/null 2>&1 || rc=1
+			# --fuzz=0: a hunk whose context no longer matches the pinned feed
+			# (e.g. a feed bump under the patch) must FAIL here, in seconds,
+			# instead of being silently nudged into place by GNU patch's
+			# default fuzz and producing a tree that differs from what the
+			# author reviewed. This is precisely how a stale patch once
+			# applied "cleanly" and then placed a duplicate struct member
+			# queued for a 3 h build to reject.
+			patch -p1 -d "$tmp" --forward --fuzz=0 <"$p" >/dev/null 2>&1 || rc=1
 		done
 		rm -rf "$tmp"
 		if [ "$rc" -ne 0 ]; then
-			bad "$feed patches do not apply to the pinned feed HEAD (feed moved?):${feed_patches[*]}"
+			bad "$feed patches do not apply exactly (--fuzz=0) to the pinned feed HEAD (feed moved, or hunks stale):${feed_patches[*]}"
 		fi
 		patch_n=$((patch_n + ${#feed_patches[@]}))
 	done < <(find "$PATCH_FEEDS" -mindepth 2 -maxdepth 2 -type d | sort | sed "s|$PATCH_FEEDS/||")
