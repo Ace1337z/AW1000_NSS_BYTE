@@ -55,7 +55,7 @@ assert d["jobs"]["build"]["steps"], "no steps"
 steps = [s.get("name", "?") for s in d["jobs"]["build"]["steps"]]
 for want in ("Bootstrap pinned sources", "Prepare feeds, config and overlays", "Build image",
              "Verify image and release metadata", "Publish release"):
-    assert want in steps, f"missing step: {want}"
+    assert any(want in s for s in steps), f"missing step: {want}"
 # A cold build (first run after a pin change, no cached toolchain/kernel)
 # takes >3 h on the 4-vCPU runner. A timeout below 300 minutes kills that run
 # at the build step, and because a timed-out job is terminated before the

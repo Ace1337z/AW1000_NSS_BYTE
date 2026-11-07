@@ -23,6 +23,21 @@ LOG="$PWD/build.log"
 # four. SMOKE=0 skips it.
 SMOKE="${SMOKE:-1}"
 
+# Phase split for CI: the workflow runs "smoke" and "world" as separate steps
+# so it can save the expensive toolchain/kernel/ccache state between the two.
+# If the world build then hits the job timeout, the next run restores that
+# warm state instead of starting from zero (a timed-out job is terminated
+# before its final cache-save steps run, so without this checkpoint an
+# overshoot throws away hours of work and every retry restarts cold).
+#   ./build.sh --smoke-only   # download + smoke, then exit 0
+#   ./build.sh --world-only    # skip smoke, do the world build + images
+#   ./build.sh                 # full run (unchanged behavior)
+MODE=full
+case "${1:-}" in
+	--smoke-only) MODE=smoke ;;
+	--world-only) MODE=world ;;
+esac
+
 cd "$OPENWRT"
 export TZ=UTC LC_ALL=C
 export KBUILD_BUILD_USER=builder KBUILD_BUILD_HOST=aw1000-nss
@@ -39,7 +54,7 @@ mkdir -p dl
 echo "== download =="
 make -j"$JOBS" V=s download || { echo "download failed; rerun: make -j1 V=s download" >&2; exit 1; }
 
-if [ "$SMOKE" != 0 ]; then
+if [ "$SMOKE" != 0 ] && [ "$MODE" != world ]; then
     # The vendor modem modules are the risky part: they are out-of-tree, only
     # built for NSS targets, and upstream CI never compiles them, so a kernel
     # API change or a missing EXPORT_SYMBOL() shows up as a modpost error after
@@ -72,6 +87,11 @@ if [ "$SMOKE" != 0 ]; then
         fi
     done
     echo "== smoke ok =="
+fi
+
+if [ "$MODE" = smoke ]; then
+    echo "smoke phase complete (state ready for cache save); stage done" >&2
+    exit 0
 fi
 
 echo "== build (jobs=$JOBS) =="

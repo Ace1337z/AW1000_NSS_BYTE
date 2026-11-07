@@ -123,7 +123,9 @@ jobs:
           # compiled kernel tree. The package/rootfs staging (staging_dir/
           # target-* and build_dir/target-*/root-*) is intentionally NOT
           # cached, so a changed package set can never leak stale files into
-          # the image.
+          # the image. The -warm- keys are the mid-run checkpoints saved
+          # after the smoke phase (see below); they are identical pin-derived
+          # state and win over nothing if a full-run save exists.
           path: |
             openwrt/staging_dir/toolchain-*
             openwrt/staging_dir/host
@@ -133,9 +135,34 @@ jobs:
             openwrt/build_dir/toolchain-*
             openwrt/build_dir/target-*/linux-*
           key: aw1000-nss-staging-${{ hashFiles('ci/bootstrap.sh', 'prepare.sh', 'VERSION') }}
+          restore-keys: |
+            aw1000-nss-staging-warm-${{ hashFiles('ci/bootstrap.sh', 'prepare.sh', 'VERSION') }}
 
-      - name: Build image
-        run: ./build.sh
+      - name: Smoke build (toolchain, kernel, patched C)
+        run: ./build.sh --smoke-only
+
+      # Checkpoint after the expensive-but-fast phase. If the world build
+      # later hits the job timeout, the run is terminated before its final
+      # cache-save steps run - so this save is what keeps the next attempt
+      # from restarting cold. Same pin-derived paths as the final save; a
+      # distinct key avoids colliding with it.
+      - name: Save warm caches (pre-world checkpoint)
+        if: success()
+        continue-on-error: true
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            openwrt/staging_dir/toolchain-*
+            openwrt/staging_dir/host
+            openwrt/staging_dir/hostpkg
+            openwrt/build_dir/host
+            openwrt/build_dir/hostpkg
+            openwrt/build_dir/toolchain-*
+            openwrt/build_dir/target-*/linux-*
+          key: aw1000-nss-staging-warm-${{ hashFiles('ci/bootstrap.sh', 'prepare.sh', 'VERSION') }}
+
+      - name: Build image (world)
+        run: ./build.sh --world-only
 
       # build.sh drives make with V=s (default verbosity sends every sub-make
       # to /dev/null, which is how a 4 h run failed with "package/X failed to
