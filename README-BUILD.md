@@ -35,13 +35,15 @@ AW1000_NSS_BYTE/
 Four packages under `local-feeds/aw1000/` are real directories rather than
 symlinks, because they are locally modified:
 
-- `luci-app-passwall2/` — upstream 26.4.10 with the geodata/GeoView deps removed.
+- `luci-app-passwall2/` — upstream 26.4.10 with the geodata/GeoView deps removed
+  and the `select PACKAGE_chinadns-ng` lines dropped.
 - `aw1000-dashboard/` — the dashboard half of XT-Martinez/aw1000-feed, with the
   NSS card replaced by a Storage card.
 - `luci-app-byte/` — vendored from Ace1337z/luci-app-byte (standalone repo), menu
   under Tools.
-- `dns2tcp/` — copied from the ImmortalWrt packages feed (PassWall v1 default
-  DNS mode), not published upstream here.
+- `dns2tcp/` — copied from the ImmortalWrt packages feed for PassWall v1's
+  default DNS mode. Kept in the feed but **not selected** in 1.0.4, since
+  PassWall v1 is no longer built.
 
 ## Target
 - board: `qualcommax/ipq807x`, profile `arcadyan_aw1000` (IPQ8072A, 1 GB RAM)
@@ -74,18 +76,17 @@ symlinks, because they are locally modified:
 | luci-app-fxs, fxsd, kmod-aw1000-fxs | Perz3us/openwrt-aw1000-phone @ f26f9f5 | 0.7.0 / 0.7.0 / 0.3.0 |
 | luci-app-netstat | dotywrt/dotycat-package @ fe9f241 | 1.2-r6 |
 | luci-app-modeminfo | Ace1337z/AW1000_BYTE @ c3afe91 `packages/` | 1.2-r1 |
-| luci-app-passwall | Ace1337z/AW1000_BYTE @ c3afe91 `packages/` | 4.66-8 |
 | luci-app-passwall2 | vendored in `local-feeds/aw1000`, from Openwrt-Passwall/openwrt-passwall2 @ 4b4b84d | 26.4.10-r1 |
 | xray-core | packages feed, patched to 26.3.27 | 26.3.27-r1 |
-| chinadns-ng, tcping | Openwrt-Passwall/openwrt-passwall-packages | 2025.08.09 / 0.3 |
-| dns2tcp | copied from ImmortalWrt packages feed | 1.1.2 |
+| tcping | Openwrt-Passwall/openwrt-passwall-packages | 0.3 |
+| dns2tcp | copied from ImmortalWrt packages feed (vendored, not selected) | 1.1.2 |
 | vnstat2 | packages feed | 2.14-r1 |
 | sms-tool_q | FUjr/QModem @ 99553e5 (feed) | 3.4.0_rc3-r0 |
 | aw1000-dashboard | vendored from XT-Martinez/aw1000-feed @ a7e14ad | 1-r1 |
 | luci-app-byte | vendored from Ace1337z/luci-app-byte (standalone, menu under Tools) | 1.0.1-r1 |
 
 Notes:
-- Xray only: every `INCLUDE_*` of both passwall packages is pinned `n`. No
+- Xray only: every `INCLUDE_*` of passwall2 is pinned `n`. No
   sing-box, hysteria, naiveproxy, shadowsocks*, v2ray-core, trojan, brook,
   haproxy. `luci-app-passwall2` no longer depends on `geoview` or
   `v2ray-geoip`/`v2ray-geosite`, so the geo databases are **not** in the image
@@ -95,14 +96,13 @@ Notes:
   already baked into the vendored copy and is not applied by prepare.sh.
 - xray-core is pinned back to the version passwall2 26.4.10 was tested with
   (`builder/patches/feeds/ppe-nss/packages/0002-xray-core-pin-26.3.27.patch`).
-- `luci-app-passwall` (v1) ships **disabled** (repo design: `global.enabled=0`,
-  no rc.d link), so it cannot fight passwall2 over port 53.
-- The image is packaged with **apk**, whose version grammar requires the
-  `-r<N>` revision suffix: `4.66-8` (opkg style) is rejected with
-  `ERROR: info field 'version' has invalid value`. passwall v1 is patched to
-  `PKG_VERSION:=4.66` / `PKG_RELEASE:=8` →
-  `4.66-r8`
-  (`builder/patches/local-feeds/aw1000/0001-passwall-v1-apk-version.patch`).
+- `luci-app-passwall` (v1) is **not built** in 1.0.4: the package is `=n` in the
+  fragment, so only passwall2 can touch DNS/firewall. The v1 source still lives
+  in `local-feeds/aw1000` because `ci/links.sh` links it from
+  `src/aw1000_byte` alongside `luci-app-modeminfo`; the local-feed patch
+  `0001-passwall-v1-apk-version.patch` (`PKG_VERSION:=4.66` /
+  `PKG_RELEASE:=8`, apk needs the `-r<N>` form) stays applied for the day v1 is
+  re-enabled, but nothing compiles it now.
 - `luci-app-netstat` needs `vnstat`; `vnstat2` `PROVIDES:=vnstat` satisfies it.
 - theme: **Footstrap is the default**. `luci-theme-footstrap` is installed, but
   its own `/etc/uci-defaults/30_luci-theme-footstrap` cannot select itself:
@@ -124,22 +124,16 @@ Notes:
   `BYTE-<version>-` prefix. The Status → Overview patch
   (`0003-status-overview-hide-arch-target.patch`) drops the Architecture and
   Target Platform rows.
-- `luci-app-passwall` (v1) menu is moved from **VPN** to **Services** and
-  renamed from "Pass Wall" to "Passwall"
-  (`0003-passwall-v1-services-menu-no-chinadns.patch`: 47 `entry()` paths and
-  the one `admin/vpn/%s` URL in `api.lua`). Its dns_mode default is `dns2tcp`.
-- **chinadns-ng is not shipped.** passwall v1's `DEPENDS` and passwall2's two
-  `select PACKAGE_chinadns-ng` lines are dropped (patch `0003` for v1, the
-  vendored `luci-app-passwall2/Makefile` for v2), so DNS goes through
-  `dnsmasq-full` + `dns2tcp`. Choosing chinadns-ng as v1's dns_mode reports
-  "not installed" — the page only offers it when the binary is present.
-- OpenClash and Nikki dependencies are **not** shipped either, so those two
-  apps cannot be installed at runtime without adding them back: `ruby`,
-  `ruby-yaml`, `yq` (18 MiB uncompressed), `kmod-inet-diag` and `kmod-dummy`
-  are all off. What passwall still needs is shipped: `bash` (v1's
-  `nftables.sh` has a `#!/bin/bash` shebang), `dnsmasq-full` +
-  `dnsmasq_full_nftset`, `kmod-nft-tproxy`, `kmod-nft-socket`, `dns2tcp`,
-  `tcping`, `unzip`, `ip-full`, `curl`, `ca-bundle`, `luci-compat`.
+- **chinadns-ng is not shipped.** passwall2's `select PACKAGE_chinadns-ng` lines
+  are dropped (vendored `luci-app-passwall2/Makefile`), so DNS goes through
+  `dnsmasq-full`. The BYTE/passwall2 page only offers a `dns_mode` whose binary
+  is actually present.
+- OpenClash and Nikki dependencies are **not shipped**, so those two apps cannot
+  be installed at runtime without adding them back: `ruby`, `ruby-yaml`, `yq`
+  (18 MiB uncompressed), `kmod-inet-diag`, `kmod-dummy` and `bash` are all off.
+  What passwall2 still needs is shipped: `dnsmasq-full` +
+  `dnsmasq_full_nftset`, `kmod-nft-tproxy`, `kmod-nft-socket`, `tcping`,
+  `unzip`, `ip-full`, `curl`, `ca-bundle`, `luci-compat`, `xray-core`.
   `kmod-tun` stays on for Tailscale/OpenVPN installs (the kmods feed cannot
   serve this kernel).
 - **Wi-Fi uses `wpad-basic-mbedtls`, not `wpad-openssl`.** Covers WPA2/WPA3
@@ -152,8 +146,7 @@ Notes:
   Nothing else in the tree depends on them; passwall2 keeps its own mwan3 hooks
   but they are no-ops without `/etc/init.d/mwan3`.
 - Geo databases (`v2ray-geoip`, `v2ray-geosite`, `geoview`) are not in the
-  image for either passwall generation; install them if `geoip:`/`geosite:`
-  rules are needed.
+  image; install them if `geoip:`/`geosite:` rules are needed.
 
 ## Device defaults baked into the image
 All of these live in `builder/devices/ipq807x-1g/files.ppe-nss/`, so a fresh
