@@ -56,10 +56,10 @@ index 8686a78..1100df4 100755
  		qmodem_voip_fault 'failed to enable the shared AT transport'
  		return 1
 diff --git a/application/voipd/src/daemon_core.c b/application/voipd/src/daemon_core.c
-index 138943b..9b69d89 100644
+index 6b56d67..2ca08d8 100644
 --- a/application/voipd/src/daemon_core.c
 +++ b/application/voipd/src/daemon_core.c
-@@ -72,6 +72,20 @@ static int wait_program(pid_t child)
+@@ -74,6 +74,20 @@ static int wait_program(pid_t child)
  	return WIFEXITED(status) && WEXITSTATUS(status) == 0 ? 0 : -1;
  }
  
@@ -80,7 +80,7 @@ index 138943b..9b69d89 100644
  int qmodem_voip_prepare_adb(const struct qmodem_voip_modem_profile *profile)
  {
  	pid_t child;
-@@ -183,7 +197,7 @@ static int run_safety(const char *action, int quiet)
+@@ -185,7 +199,7 @@ static int run_safety(const char *action, int quiet)
  		execl(SAFETY_HELPER, SAFETY_HELPER, action, (char *)NULL);
  		_exit(127);
  	}
@@ -89,7 +89,7 @@ index 138943b..9b69d89 100644
  }
  
  static void serial_arm_process_done(struct uloop_process *process, int status)
-@@ -644,19 +658,23 @@ static int capabilities_method(struct ubus_context *ubus,
+@@ -646,19 +660,23 @@ static int capabilities_method(struct ubus_context *ubus,
  {
  	struct qmodem_voip_context *app = &qmodem_voip_ctxt;
  	struct blob_buf buffer = { 0 };
@@ -115,7 +115,7 @@ index 138943b..9b69d89 100644
  	blobmsg_add_u8(&buffer, "enabled", app->call.enabled);
  	blobmsg_add_string(&buffer, "hardware", app->media.profile.model);
  	blobmsg_add_string(&buffer, "external_sip", "unsupported");
-@@ -669,9 +687,16 @@ static int capabilities_method(struct ubus_context *ubus,
+@@ -671,9 +689,16 @@ static int capabilities_method(struct ubus_context *ubus,
  enum qmodem_voip_activation_result {
  	QMODEM_VOIP_ACTIVATION_FAILED = -1,
  	QMODEM_VOIP_ACTIVATION_READY = 0,
@@ -133,7 +133,7 @@ index 138943b..9b69d89 100644
  static void release_runtime(struct qmodem_voip_context *app)
  {
  	uloop_timeout_cancel(&app->browser_timer);
-@@ -684,11 +709,12 @@ static void release_runtime(struct qmodem_voip_context *app)
+@@ -686,11 +711,12 @@ static void release_runtime(struct qmodem_voip_context *app)
  static int activate_runtime(struct qmodem_voip_context *app)
  {
  	int result;
@@ -148,7 +148,7 @@ index 138943b..9b69d89 100644
  	}
  	if (result > 0) {
  		syslog(LOG_NOTICE,
-@@ -696,15 +722,28 @@ static int activate_runtime(struct qmodem_voip_context *app)
+@@ -698,15 +724,28 @@ static int activate_runtime(struct qmodem_voip_context *app)
  		return QMODEM_VOIP_ACTIVATION_RESTART;
  	}
  	if (qmodem_voip_prepare_media_gate(&app->media.profile) != 0) {
@@ -181,7 +181,7 @@ index 138943b..9b69d89 100644
  	}
  	qmodem_voip_call_set_enabled(&app->call, 1);
  	app->command_failed = 0;
-@@ -714,7 +753,9 @@ static int activate_runtime(struct qmodem_voip_context *app)
+@@ -716,7 +755,9 @@ static int activate_runtime(struct qmodem_voip_context *app)
  		release_runtime(app);
  		(void)run_safety("disable", 0);
  		qmodem_voip_call_set_enabled(&app->call, 0);
@@ -192,7 +192,7 @@ index 138943b..9b69d89 100644
  	}
  	uloop_timeout_set(&app->browser_timer, 20);
  	qmodem_voip_publish_event(&app->call, "enabled", app);
-@@ -729,6 +770,33 @@ static void schedule_modem_reenumeration(struct qmodem_voip_context *app)
+@@ -731,6 +772,33 @@ static void schedule_modem_reenumeration(struct qmodem_voip_context *app)
  	uloop_timeout_set(&app->restart_timer, 500);
  }
  
@@ -226,8 +226,8 @@ index 138943b..9b69d89 100644
  void qmodem_voip_activation_timer(struct uloop_timeout *timeout)
  {
  	struct qmodem_voip_context *app = &qmodem_voip_ctxt;
-@@ -742,12 +810,18 @@ void qmodem_voip_activation_timer(struct uloop_timeout *timeout)
- 		schedule_modem_reenumeration(app);
+@@ -753,12 +821,18 @@ void qmodem_voip_activation_timer(struct uloop_timeout *timeout)
+ 			QMODEM_VOIP_ACTIVATION_RETRY_MS);
  		return;
  	}
 +	if (result == QMODEM_VOIP_ACTIVATION_DEFERRED) {
@@ -246,7 +246,7 @@ index 138943b..9b69d89 100644
  }
  
  void qmodem_voip_restart_timer(struct uloop_timeout *timeout)
-@@ -774,6 +848,7 @@ static int enable_method(struct ubus_context *ubus, struct ubus_object *object,
+@@ -785,6 +859,7 @@ static int enable_method(struct ubus_context *ubus, struct ubus_object *object,
  		return qmodem_voip_reply_status(ubus, request, UBUS_STATUS_UNKNOWN_ERROR,
  				    "config_failed", "application enable could not be persisted");
  	app->start_enabled = 1;
@@ -254,7 +254,7 @@ index 138943b..9b69d89 100644
  	result = activate_runtime(app);
  	if (result == QMODEM_VOIP_ACTIVATION_RESTART) {
  		schedule_modem_reenumeration(app);
-@@ -785,6 +860,14 @@ static int enable_method(struct ubus_context *ubus, struct ubus_object *object,
+@@ -796,6 +871,14 @@ static int enable_method(struct ubus_context *ubus, struct ubus_object *object,
  		return qmodem_voip_reply_status(ubus, request, UBUS_STATUS_NOT_SUPPORTED,
  				    "unsupported", "unsupported or unsafe modem media path");
  	}
@@ -270,10 +270,10 @@ index 138943b..9b69d89 100644
  }
  
 diff --git a/application/voipd/src/daemon_core.h b/application/voipd/src/daemon_core.h
-index 76bf602..74e355e 100644
+index 8d8a84d..8daa71e 100644
 --- a/application/voipd/src/daemon_core.h
 +++ b/application/voipd/src/daemon_core.h
-@@ -40,6 +40,7 @@ struct qmodem_voip_context {
+@@ -41,6 +41,7 @@ struct qmodem_voip_context {
  	unsigned int serial_active_arm_attempts;
  	unsigned int serial_active_generation;
  	unsigned int serial_arm_process_generation;
