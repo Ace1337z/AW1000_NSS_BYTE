@@ -1,0 +1,45 @@
+diff --git a/luci-app-aw1k-led/Makefile b/luci-app-aw1k-led/Makefile
+index 21bbbb5..0407808 100644
+--- a/luci-app-aw1k-led/Makefile
++++ b/luci-app-aw1k-led/Makefile
+@@ -9,7 +9,7 @@ PKG_LICENSE:=GPL-3.0
+ 
+ LUCI_TITLE:=AW1K LED Controller
+ LUCI_DESCRIPTION:=LuCI application to configure LED behavior based on 5G signal quality.
+-LUCI_DEPENDS:=
++LUCI_DEPENDS:=+luci-compat +sms-tool_q
+ 
+ PKG_BUILD_DIR := $(BUILD_DIR)/$(PKG_NAME)
+ 
+@@ -33,6 +33,9 @@ endef
+ 
+ define Package/$(PKG_NAME)/install
+ 	$(CP) ./files/* $(1)/
++	$(CHMOD) 0755 $(1)/etc/init.d/led-status \
++		$(1)/etc/uci-defaults/99-set \
++		$(1)/usr/bin/led-status.sh
+ endef
+ 
+ $(eval $(call BuildPackage,$(PKG_NAME)))
+diff --git a/luci-app-aw1k-led/files/usr/bin/led-status.sh b/luci-app-aw1k-led/files/usr/bin/led-status.sh
+index d8a37e9..7131208 100644
+--- a/luci-app-aw1k-led/files/usr/bin/led-status.sh
++++ b/luci-app-aw1k-led/files/usr/bin/led-status.sh
+@@ -105,9 +105,15 @@ if [ -z "$COMM" ]; then
+     exit 1
+ fi
+ 
+-MODEM_INFO=$(sms_tool -d "$COMM" at 'AT+CSQ;+QENG="servingcell"')
++# QModem ships the tool as sms_tool_q (package sms-tool_q); upstream sms-tool
++# installs sms_tool. Accept either so the signal LEDs work in both images.
++SMS_TOOL=$(command -v sms_tool 2>/dev/null || command -v sms_tool_q 2>/dev/null)
++MODEM_INFO=""
++[ -n "$SMS_TOOL" ] && MODEM_INFO=$("$SMS_TOOL" -d "$COMM" at 'AT+CSQ;+QENG="servingcell"' 2>/dev/null)
+ CSQ=$(echo "$MODEM_INFO" | grep -i '+CSQ:' | awk -F'[ ,:]+' '{print $2}')
+-[ -z "$CSQ" ] && CSQ=0
++case "$CSQ" in
++    ''|*[!0-9]*) CSQ=0 ;;
++esac
+ SNR=0
+ FIELD_NUM=0
+ CLEAN_MODEM_INFO=$(echo "$MODEM_INFO" | sed 's/,[[:space:]]*/,/g')

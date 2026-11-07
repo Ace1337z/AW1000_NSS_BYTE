@@ -74,7 +74,8 @@ if [ "$SMOKE" != 0 ] && [ "$MODE" != world ]; then
                 package/feeds/qmodem/qmodem/compile \
                 package/feeds/qmodem/qmodem_uplink_manager/compile \
                 package/feeds/qmodem/luci-app-qmodem-voip/compile \
-                package/feeds/qmodem/luci-app-qmodem-ttlfw4/compile; do
+                package/feeds/qmodem/luci-app-qmodem-ttlfw4/compile \
+                package/feeds/aw1000/luci-app-aw1k-led/compile; do
         echo "-- smoke: $goal"
         set +e
         make -j"$JOBS" V=sc "$goal" 2>&1 | tee -a "$LOG"

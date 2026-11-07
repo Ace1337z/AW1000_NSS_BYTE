@@ -48,6 +48,8 @@ CONFIG_PACKAGE_luci-app-fxs=y
 CONFIG_PACKAGE_fxsd=y
 ## dotycat NET Stats (vnstat backed)
 CONFIG_PACKAGE_luci-app-netstat=y
+## dotycat AW1K LED Controller (LEDs by 5G signal quality)
+CONFIG_PACKAGE_luci-app-aw1k-led=y
 ## Modem information page (repo copy; needs sms-tool_q from the qmodem feed)
 CONFIG_PACKAGE_luci-app-modeminfo=y
 ## PassWall2 (upstream 26.4.10 pin). Passwall v1 removed to trim the image.

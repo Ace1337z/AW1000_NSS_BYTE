@@ -29,3 +29,4 @@ link ../../src/passwall-pkgs2/tcping             tcping
 link ../../src/aw1000_byte/packages/luci-app-modeminfo luci-app-modeminfo
 link ../../src/aw1000_byte/packages/luci-app-passwall  luci-app-passwall
 link ../../src/dotycat/luci-app-netstat          luci-app-netstat
+link ../../src/dotycat/luci-app-aw1k-led        luci-app-aw1k-led

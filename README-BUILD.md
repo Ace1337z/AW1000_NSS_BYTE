@@ -85,6 +85,7 @@ symlinks, because they are locally modified:
 | sms-tool_q | FUjr/QModem @ 99553e5 (feed) | 3.4.0_rc3-r0 |
 | aw1000-dashboard | vendored from XT-Martinez/aw1000-feed @ a7e14ad | 1-r1 |
 | luci-app-byte | vendored from Ace1337z/luci-app-byte (standalone, menu under Tools) | 1.0.1-r1 |
+| luci-app-aw1k-led | dotywrt/dotycat-package @ fe9f241 | 1.0-r5 |
 
 Notes:
 - Xray only: every `INCLUDE_*` of passwall2 is pinned `n`. No
@@ -105,6 +106,16 @@ Notes:
   `PKG_RELEASE:=8`, apk needs the `-r<N>` form) stays applied for the day v1 is
   re-enabled, but nothing compiles it now.
 - `luci-app-netstat` needs `vnstat`; `vnstat2` `PROVIDES:=vnstat` satisfies it.
+- `luci-app-aw1k-led` (menu `admin/tools/5g`) is a Lua CBI app, so it needs
+  `luci-compat` (both `luci-compat` and `luci-lua-runtime` are `=y` in the
+  image). Upstream declares no `LUCI_DEPENDS`; the local-feed patch
+  `0006-luci-app-aw1k-led-busybox-deps.patch` adds `+luci-compat +sms-tool_q`,
+  teaches `led-status.sh` to use `sms_tool_q` (what OpenWrt/QModem installs —
+  there is no `/usr/bin/sms_tool`), guards non-numeric `CSQ`, and marks the
+  daemon/init/uci-defaults scripts `0755` at install time (the source files
+  are committed non-executable; `99-set` used to chmod them only at first
+  boot). LEDs absent from `board.json` (`red:internet`, `blue:wifi`,
+  `red:wifi`, `red:phone`) are skipped by the script's `[ -d ]` guard.
 - theme: **Footstrap is the default**. `luci-theme-footstrap` is installed, but
   its own `/etc/uci-defaults/30_luci-theme-footstrap` cannot select itself:
   `luci-base` already ships `option mediaurlbase '/luci-static/bootstrap'` in

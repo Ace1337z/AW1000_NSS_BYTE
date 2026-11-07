@@ -124,6 +124,10 @@ for feeddir in "$BUILDER_REPO/patches/feeds/$VARIANT"/*; do
     # CI builds. Any direct edits to the feed checkout are discarded.
     log::info "Re-applying ${#feed_patches[@]} patch(es) to $feed from a clean pinned HEAD"
     git -C "$feed" reset -q --hard HEAD
+    # reset --hard does not remove untracked files; patch-created new files
+    # (e.g. c/uci-defaults/92-qmodem-sip-secure) would survive and make the
+    # strict reapply fail with "already exists".
+    git -C "$feed" clean -qfd
     for p in "${feed_patches[@]}"; do
       log::info "Patching $feed with $(basename "$p")"
       patch -p1 -d "$feed" --forward --fuzz=0 <"$p" || log::die "$(basename "$p") does not apply exactly (--fuzz=0) to $feed"
