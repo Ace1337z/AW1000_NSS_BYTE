@@ -56,8 +56,16 @@ steps = [s.get("name", "?") for s in d["jobs"]["build"]["steps"]]
 for want in ("Bootstrap pinned sources", "Prepare feeds, config and overlays", "Build image",
              "Verify image and release metadata", "Publish release"):
     assert want in steps, f"missing step: {want}"
+# A cold build (first run after a pin change, no cached toolchain/kernel)
+# takes >3 h on the 4-vCPU runner. A timeout below 300 minutes kills that run
+# at the build step, and because a timed-out job is terminated before the
+# if:always() cache-save steps run, every retry restarts cold - each attempt
+# burns the full cold build again. 350 min is the proven floor for a cold
+# world build and stays under GitHub's 6 h cap.
+timeout = d["jobs"]["build"].get("timeout-minutes") or 0
+assert timeout >= 300, f"timeout-minutes={timeout} < 300: a cold build exceeds 3 h; timed-out runs never save caches and restart cold"
 PY
-	ok "workflow parses, required steps present"
+	ok "workflow parses, required steps present, timeout >= 300 min"
 else
 	warn "python3-yaml absent, workflow not parsed"
 fi
