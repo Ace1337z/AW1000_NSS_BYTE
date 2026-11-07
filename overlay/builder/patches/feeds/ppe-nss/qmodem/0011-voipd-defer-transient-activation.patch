@@ -201,24 +201,24 @@ index 138943b..9b69d89 100644
 +	unsigned int exponent;
 +	unsigned int delay_ms;
 +
-+	if (app->activation_attempts >= QMODEM_VOIP_ACTIVATION_MAX_ATTEMPTS) {
++	if (app->activation_deferred_attempts >= QMODEM_VOIP_ACTIVATION_MAX_ATTEMPTS) {
 +		/* Give up for this boot without touching UCI: enabled stays 1, so
 +		 * the next service start (or reboot) tries again. */
 +		syslog(LOG_WARNING,
 +			"voice still not ready after %u attempts; keeping config enabled, retry on next start",
-+			app->activation_attempts);
++			app->activation_deferred_attempts);
 +		return;
 +	}
-+	exponent = app->activation_attempts;
++	exponent = app->activation_deferred_attempts;
 +	if (exponent > 8)
 +		exponent = 8;
 +	delay_ms = QMODEM_VOIP_ACTIVATION_MIN_DELAY_MS << exponent;
 +	if (delay_ms > QMODEM_VOIP_ACTIVATION_MAX_DELAY_MS)
 +		delay_ms = QMODEM_VOIP_ACTIVATION_MAX_DELAY_MS;
-+	app->activation_attempts++;
++	app->activation_deferred_attempts++;
 +	syslog(LOG_NOTICE,
 +		"voice activation deferred; retry %u/%u in %u ms",
-+		app->activation_attempts, QMODEM_VOIP_ACTIVATION_MAX_ATTEMPTS,
++		app->activation_deferred_attempts, QMODEM_VOIP_ACTIVATION_MAX_ATTEMPTS,
 +		delay_ms);
 +	uloop_timeout_set(&app->activation_timer, delay_ms);
 +}
@@ -242,7 +242,7 @@ index 138943b..9b69d89 100644
 +			"voice hardware unsupported; application disabled");
 +		return;
  	}
-+	app->activation_attempts = 0;
++	app->activation_deferred_attempts = 0;
  }
  
  void qmodem_voip_restart_timer(struct uloop_timeout *timeout)
@@ -250,7 +250,7 @@ index 138943b..9b69d89 100644
  		return qmodem_voip_reply_status(ubus, request, UBUS_STATUS_UNKNOWN_ERROR,
  				    "config_failed", "application enable could not be persisted");
  	app->start_enabled = 1;
-+	app->activation_attempts = 0;
++	app->activation_deferred_attempts = 0;
  	result = activate_runtime(app);
  	if (result == QMODEM_VOIP_ACTIVATION_RESTART) {
  		schedule_modem_reenumeration(app);
@@ -277,7 +277,7 @@ index 76bf602..74e355e 100644
  	unsigned int serial_active_arm_attempts;
  	unsigned int serial_active_generation;
  	unsigned int serial_arm_process_generation;
-+	unsigned int activation_attempts;
++	unsigned int activation_deferred_attempts;
  	int start_enabled;
  	int stop;
  };
