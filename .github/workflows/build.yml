@@ -46,7 +46,11 @@ jobs:
   build:
     name: Build AW1000 NSS image
     runs-on: ubuntu-24.04
-    timeout-minutes: 180
+    # A cold world build on 4 vCPU runs ~4 h; 180 min cut two runs off at the
+    # 3 h mark (GitHub reports that as conclusion=cancelled, which looks like
+    # someone cancelled it). Stay under GitHub's 6 h cap but above the cold
+    # build, and let ccache/warm caches bring later runs under 3 h.
+    timeout-minutes: 350
     steps:
       - name: Checkout this repo
         uses: actions/checkout@v4

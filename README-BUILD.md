@@ -466,8 +466,9 @@ CI (4 vCPU / 16 GB) builds at `-j4` and keeps three caches between runs:
 (toolchain, host tools, compiled kernel tree — keyed on `ci/bootstrap.sh` +
 `prepare.sh` + `VERSION`, so a pin change rebuilds it once and the cache is
 never reused across different sources). Repeat runs with unchanged pins are
-therefore mostly cache hits and finish well inside 2 h; a cold run (first
-build after a pin change) is the full ~2.5–3 h build.
+therefore mostly cache hits and finish faster; a cold run (first build after a
+pin change) is the full build and can pass 3 h, so the job timeout is 350 min
+(GitHub's hard cap is 6 h).
 
 Output:
 `openwrt/bin/targets/qualcommax/ipq807x/*arcadyan_aw1000*squashfs-sysupgrade.bin`
